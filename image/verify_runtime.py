@@ -25,6 +25,15 @@ def cuda_providers(maps=None, nvidia_root=None):
     return result
 
 
+def assert_installer_free(root):
+    root=Path(root)
+    paths=[root/'lib/python3.14/ensurepip', root/'lib/python3.14/site-packages/pip']
+    paths+=list((root/'lib/python3.14/site-packages').glob('pip-*.dist-info'))
+    paths+=list((root/'bin').glob('pip*'))
+    if any(path.exists() or path.is_symlink() for path in paths):
+        raise RuntimeError('Build-only Python installer retained in final runtime')
+
+
 def verify(mode, lock):
     if platform.python_version() != lock['python']['version']:
         raise RuntimeError('Python version differs from runtime lock')
@@ -57,10 +66,14 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--mode', choices=['cpu', 'gpu'], required=True)
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--require-installer-free', action='store_true')
     args = parser.parse_args()
+    if args.require_installer_free:
+        assert_installer_free(sys.prefix)
     lock_path = Path(__file__).with_name('runtime-lock.json')
     result = verify(args.mode, json.loads(lock_path.read_text()))
     result['lock_sha256'] = hashlib.sha256(lock_path.read_bytes()).hexdigest()
+    result['installer_free_checked'] = args.require_installer_free
     args.output.write_text(json.dumps(result, indent=2) + '\n')
     print(json.dumps(result))
 

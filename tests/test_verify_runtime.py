@@ -17,6 +17,15 @@ class VerifierTests(unittest.TestCase):
     def setUp(self):
         self.lock = {'python': {'version': '3.14.7'}, 'wheels': [{'name': 'example', 'version': '1.0'}]}
 
+    def test_installer_modules_and_bundled_wheels_are_rejected(self):
+        self.assertTrue(hasattr(verifier, 'assert_installer_free'))
+        for relative in ['lib/python3.14/site-packages/pip/__init__.py', 'lib/python3.14/ensurepip/_bundled/pip.whl', 'bin/pip3.14']:
+            with self.subTest(relative=relative), tempfile.TemporaryDirectory() as directory:
+                root=Path(directory)
+                verifier.assert_installer_free(root)
+                p=root/relative;p.parent.mkdir(parents=True,exist_ok=True);p.write_bytes(b'fixture')
+                with self.assertRaises(RuntimeError): verifier.assert_installer_free(root)
+
     def test_wrong_python_fails_before_imports(self):
         with patch.object(verifier.platform, 'python_version', return_value='3.12.0'):
             with self.assertRaisesRegex(RuntimeError, 'Python version'):

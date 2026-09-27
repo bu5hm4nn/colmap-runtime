@@ -2,6 +2,7 @@ import importlib.util
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -14,6 +15,16 @@ class SyntheticCanaryTests(unittest.TestCase):
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         return module
+
+    def test_cpu_api_check_is_explicit_and_worker_is_bounded(self):
+        module=self.load()
+        with patch.object(module.sys, 'argv', ['canary','--output','/tmp/example','--check-api']), patch.object(module.subprocess,'run') as run:
+            module.main()
+            self.assertIn('--check-api',run.call_args.args[0])
+            self.assertEqual(run.call_args.kwargs['timeout'],300)
+        with patch.object(module.sys, 'argv', ['canary','--output','/tmp/example']), patch.object(module.subprocess,'run') as run:
+            module.main()
+            self.assertNotIn('--check-api',run.call_args.args[0])
 
     def test_generated_fixture_has_consistent_camera_tracks(self):
         module = self.load()

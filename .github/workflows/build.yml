@@ -48,8 +48,17 @@ jobs:
             docker cp "$cid:/opt/colmap-runtime/$file" "reports/$file"
           done
           docker run --rm --network none --entrypoint python3.14 colmap-runtime:candidate \
-            /opt/colmap-runtime/verify_runtime.py --mode cpu --output /tmp/cpu-check.json \
+            /opt/colmap-runtime/verify_runtime.py --mode cpu --require-installer-free --output /tmp/cpu-check.json \
             | tee reports/offline-import-check.json
+      - name: Exercise exact native API on CPU before GPU testing
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm --network none \
+            --mount "type=bind,source=$PWD/scripts/synthetic_canary.py,target=/tmp/synthetic_canary.py,readonly" \
+            --entrypoint python3.14 colmap-runtime:candidate \
+            /tmp/synthetic_canary.py --check-api --output /tmp/api-check \
+            2>&1 | tee reports/api-preflight.log
       - name: Audit all layers and context exclusion
         shell: bash
         env:
@@ -78,7 +87,8 @@ jobs:
             --output reports/vulnerabilities.json colmap-runtime:candidate
           docker image inspect --format '{{.Id}}' colmap-runtime:candidate > reports/image-id.txt
           printf '%s\n' "$GITHUB_SHA" > reports/source-commit.txt
-          (cd reports && sha256sum *.json *.txt > SHA256SUMS)
+          python3 scripts/check_security.py reports/vulnerabilities.json > reports/security-gate.json
+          (cd reports && sha256sum *.json *.txt *.log > SHA256SUMS)
       - name: Retain evidence even after failure
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

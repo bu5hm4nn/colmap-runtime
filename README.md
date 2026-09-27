@@ -31,7 +31,9 @@ required authentication externally at runtime.
 - Interpreter: `/opt/colmap-runtime/python/bin/python3.14`.
 - Runtime manifest: `/opt/colmap-runtime/runtime-manifest.json`.
 
-Ubuntu packages resolve security updates at build time. **Rebuilds are not
+Ubuntu packages receive security updates at build time. Build-only pip/ensurepip
+are removed before the Python runtime is copied into the final image; runtime
+package installation is intentionally unavailable. **Rebuilds are not
 bit-identical**; use published images by immutable digest. Exact Python and system
 package inventories are generated during the build.
 
@@ -42,7 +44,8 @@ support. It repeats the import check with networking disabled. Full chained load
 exceptions remain visible in logs. These checks do not establish GPU execution;
 the verifier's GPU mode reports device model and driver information only.
 
-The workflow emits a CycloneDX SBOM and vulnerability report. Scan completion does
+The workflow emits a CycloneDX SBOM and vulnerability report and refuses HIGH or
+CRITICAL findings. Lower-severity findings remain visible for review; passing does
 not imply zero vulnerabilities. An all-layer audit checks a synthetic context
 canary and common credential patterns, including files hidden by later layers;
 it is not a guarantee against all sensitive content.
@@ -54,7 +57,9 @@ textured-plane views, runs CUDA feature extraction/matching and dense stereo,
 and checks fused geometry against known depth. Run it with the image's Python
 interpreter; the output directory must be fresh. It uses known camera poses and
 is not a test of SfM pose recovery. A separate worker-process timeout is 300 seconds.
-The script is unit-tested, but its GPU execution has not yet been validated.
+Use `--check-api` for CPU feature extraction, matching, undistortion and dense-option
+validation against the installed bindings. This mode explicitly does not certify
+GPU execution. The GPU path has not yet been validated.
 
 ## Deployment
 

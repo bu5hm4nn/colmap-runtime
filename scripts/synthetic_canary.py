@@ -75,7 +75,7 @@ def validate_points(points):
     return {'points':len(points),'median_depth_error':median,'p95_depth_error':p95}
 
 
-def worker(output):
+def worker(output, cpu_only=False):
     import pycolmap as pc
     if not pc.has_cuda:
         raise RuntimeError('CUDA-enabled PyCOLMAP required')
@@ -84,9 +84,10 @@ def worker(output):
     fixture=generate_fixture(output/'fixture')
     db=output/'features.db'
     gpu='0'
+    device=pc.Device.cpu if cpu_only else pc.Device.cuda
     pc.extract_features(db,output/'fixture/images',camera_mode=pc.CameraMode.SINGLE,
-                        extraction_options={'gpu_index':gpu,'use_gpu':True,'max_image_size':WIDTH,'num_threads':4,'sift':{'max_num_features':2048}},device=pc.Device.cuda)
-    pc.match_exhaustive(db,matching_options={'gpu_index':gpu,'use_gpu':True,'num_threads':4},device=pc.Device.cuda)
+                        extraction_options={'gpu_index':gpu,'use_gpu':not cpu_only,'max_image_size':WIDTH,'num_threads':4,'sift':{'max_num_features':2048}},device=device)
+    pc.match_exhaustive(db,matching_options={'gpu_index':gpu,'use_gpu':not cpu_only,'num_threads':4},device=device)
     with sqlite3.connect(f'file:{db}?mode=ro',uri=True) as connection:
         features=connection.execute('SELECT COALESCE(SUM(rows),0) FROM keypoints').fetchone()[0]
         matches=connection.execute('SELECT COALESCE(SUM(rows),0) FROM matches').fetchone()[0]
@@ -96,13 +97,22 @@ def worker(output):
     pc.undistort_images(dense,output/'fixture/sparse',output/'fixture/images',num_patch_match_src_images=4,num_threads=4)
     options={'gpu_index':gpu,'max_image_size':WIDTH,'num_threads':4,'num_iterations':3,
              'depth_min':3.5,'depth_max':4.5,'geom_consistency':True,'cache_size':0.5}
+    fusion_options={'min_num_pixels':2,'num_threads':4,'cache_size':0.5}
+    if not pc.PatchMatchOptions(options).check() or not pc.StereoFusionOptions(fusion_options).check():
+        raise ValueError('Native dense options rejected')
+    if cpu_only:
+        report={'api_preflight_passed':True,'gpu_execution_validated':False,
+                'features':features,'matches':matches,'pycolmap_version':pc.__version__}
+        (output/'report.json').write_text(json.dumps(report,indent=2)+'\n')
+        print(json.dumps(report),flush=True)
+        return
     pc.patch_match_stereo(dense,options=options)
     fused=output/'fused.ply'
-    cloud=pc.stereo_fusion(fused,dense,input_type='geometric',options={'min_num_pixels':2,'num_threads':4,'cache_size':0.5})
+    cloud=pc.stereo_fusion(fused,dense,input_type='geometric',options=fusion_options)
     quality=validate_points(p.xyz for p in cloud.points3D.values())
     if not fused.is_file() or fused.stat().st_size<1000:
         raise ValueError('Fused output missing or truncated')
-    report={'accepted':True,'scope':'synthetic single-GPU pipeline only; known camera poses, no SfM accuracy claim',
+    report={'accepted':True,'gpu_execution_validated':True,'scope':'synthetic single-GPU pipeline only; known camera poses, no SfM accuracy claim',
             'fixture':fixture,'gpu_index':gpu,'features':features,'matches':matches,'quality':quality,
             'elapsed_seconds':time.monotonic()-started,'pycolmap_version':pc.__version__,'patch_match_options':options}
     (output/'report.json').write_text(json.dumps(report,indent=2)+'\n')
@@ -113,13 +123,17 @@ def main():
     parser=argparse.ArgumentParser()
     parser.add_argument('--output',type=Path,required=True)
     parser.add_argument('--worker',action='store_true',help=argparse.SUPPRESS)
+    parser.add_argument('--check-api',action='store_true',help='CPU feature/matching/undistortion and dense-options check only')
     args=parser.parse_args()
     if args.worker:
-        worker(args.output)
+        worker(args.output, cpu_only=args.check_api)
     else:
         # Bound the native extension process externally; Python alarms cannot
         # reliably interrupt a long C++ call. Allocation deadline is separate.
-        subprocess.run([sys.executable,__file__,'--worker','--output',str(args.output)],check=True,timeout=300)
+        command=[sys.executable,__file__,'--worker','--output',str(args.output)]
+        if args.check_api:
+            command.append('--check-api')
+        subprocess.run(command,check=True,timeout=300)
 
 
 if __name__=='__main__':
