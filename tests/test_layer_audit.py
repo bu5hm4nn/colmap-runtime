@@ -3,6 +3,8 @@ import io
 import json
 import tarfile
 import tempfile
+import hashlib
+from unittest.mock import patch
 from pathlib import Path
 import unittest
 
@@ -25,6 +27,24 @@ class LayerAuditTests(unittest.TestCase):
         module.check_member('opt/runtime-lock.json', b'{"version":"1.0"}')
         # A parser's literal header string is not itself secret key material.
         module.check_member('lib/libcrypto.so', b'-----BEGIN PRIVATE KEY-----\0')
+
+    def test_public_library_fixture_exception_is_exact_and_path_scoped(self):
+        spec = importlib.util.spec_from_file_location('audit_image', ROOT/'scripts/audit_image.py')
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        self.assertTrue(hasattr(module, 'PUBLIC_SELFTEST_HASHES'))
+        fixture = b'-----BEGIN RSA PRIVATE KEY-----\n' + b'A'*80 + b'\n'
+        digest = hashlib.sha256(fixture).hexdigest()
+        path = 'usr/lib/x86_64-linux-gnu/libgnutls.so.30.37.1'
+        with patch.object(module, 'PUBLIC_SELFTEST_HASHES', {digest}):
+            module.check_member(path, fixture+b'-----END RSA PRIVATE KEY-----')
+            with self.assertRaises(ValueError):
+                module.check_member('opt/unrelated', fixture)
+            with self.assertRaises(ValueError):
+                module.check_member(path, fixture.replace(b'AAA', b'BBB'))
+            module.check_member(path, fixture[:100], final=False)
+            with self.assertRaises(ValueError):
+                module.check_member(path, fixture[:100], final=True)
 
     def test_scans_lower_layers_config_and_chunk_boundaries(self):
         path = ROOT / 'scripts/audit_image.py'

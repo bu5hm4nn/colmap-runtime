@@ -47,6 +47,15 @@ not imply zero vulnerabilities. An all-layer audit checks a synthetic context
 canary and common credential patterns, including files hidden by later layers;
 it is not a guarantee against all sensitive content.
 
+## Synthetic GPU check
+
+`scripts/synthetic_canary.py --output /tmp/colmap-canary` generates five small
+textured-plane views, runs CUDA feature extraction/matching and dense stereo,
+and checks fused geometry against known depth. Run it with the image's Python
+interpreter; the output directory must be fresh. It uses known camera poses and
+is not a test of SfM pose recovery. A separate worker-process timeout is 300 seconds.
+The script is unit-tested, but its GPU execution has not yet been validated.
+
 ## Deployment
 
 The image has no SSH host keys and does not start SSH automatically. Configure
