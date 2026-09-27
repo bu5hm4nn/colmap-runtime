@@ -11,7 +11,7 @@ import re
 import tarfile
 
 KEY_PATTERN = rb'-----BEGIN (?:OPENSSH |RSA |EC |DSA )?PRIVATE KEY-----\r?\n[A-Za-z0-9+/=\r\n]{64,}'
-PATTERNS = [rb'BUILD_CONTEXT_EXCLUSION_CANARY', rb'github_pat_[A-Za-z0-9_]{40,}', rb'gh[pousr]_[A-Za-z0-9]{30,}']
+PATTERNS = [rb'BUILD_CONTEXT_EXCLUSION_CANARY', rb'(?<![A-Za-z0-9_])github_pat_[A-Za-z0-9_]{40,}', rb'(?<![A-Za-z0-9_])gh[pousr]_[A-Za-z0-9]{30,}']
 # Exact public known-answer fixtures compiled into this Ubuntu library.
 # Source: https://github.com/gnutls/gnutls/blob/3.8.3/lib/crypto-selftests-pk.c
 # Hashes cover KEY_PATTERN matches, not arbitrary library content. No library-wide bypass.

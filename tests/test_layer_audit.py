@@ -27,6 +27,10 @@ class LayerAuditTests(unittest.TestCase):
         module.check_member('opt/runtime-lock.json', b'{"version":"1.0"}')
         # A parser's literal header string is not itself secret key material.
         module.check_member('lib/libcrypto.so', b'-----BEGIN PRIVATE KEY-----\0')
+        # C++ Highs_ symbols contain the substring ghs_, not a GitHub token.
+        module.check_member('lib/solver.so', b'Highs_' + b'SolverSymbol'*5)
+        with self.assertRaises(ValueError):
+            module.check_member('opt/config', b'token="ghs_' + b'A'*36 + b'"')
 
     def test_public_library_fixture_exception_is_exact_and_path_scoped(self):
         spec = importlib.util.spec_from_file_location('audit_image', ROOT/'scripts/audit_image.py')
