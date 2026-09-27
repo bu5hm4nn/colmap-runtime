@@ -2,9 +2,16 @@
 
 GPU-ready PyCOLMAP container with pinned scientific dependencies.
 
-**Status:** native imports have been validated in a CPU-only build. The current
-revision requires a fresh build. GPU execution and reconstruction quality have
-not been validated. No container image is published yet.
+**Status:** a CPU-validated candidate is published. Anonymous pull and offline
+imports by digest passed; GPU execution and reconstruction quality remain unvalidated.
+
+```text
+ghcr.io/bu5hm4nn/colmap-runtime@sha256:3922f73194629e3f1b9d83b639d03bf8b7188cbec9776706d49dfa9438f64fde
+```
+
+Built from commit `800cd7d4dd56933c647caedee7eea4210ca22158` in
+[workflow run 36315027809](https://github.com/bu5hm4nn/colmap-runtime/actions/runs/36315027809).
+Later repository changes are not automatically included in this image.
 
 ## Build
 
