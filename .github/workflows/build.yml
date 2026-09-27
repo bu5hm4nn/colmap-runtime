@@ -7,6 +7,10 @@ on:
         description: Publication is gated until CPU, licence and layer review pass
         type: boolean
         default: false
+      accept_redistribution_terms:
+        description: Publisher has reviewed and accepts applicable third-party redistribution conditions
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -17,17 +21,24 @@ concurrency:
 
 jobs:
   build:
+    permissions:
+      contents: read
+      packages: write
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Publication gate
+      - name: Publication terms gate
         if: inputs.publish
+        env:
+          ACCEPT_TERMS: ${{ inputs.accept_redistribution_terms }}
         run: |
-          echo 'Publication remains blocked until candidate evidence and redistribution review are accepted.' >&2
-          exit 1
+          if [ "$ACCEPT_TERMS" != true ]; then
+            echo 'Publisher must review and accept third-party redistribution conditions.' >&2
+            exit 1
+          fi
       - name: Test build contract
         env:
           PYTHONDONTWRITEBYTECODE: '1'
@@ -88,6 +99,37 @@ jobs:
           docker image inspect --format '{{.Id}}' colmap-runtime:candidate > reports/image-id.txt
           printf '%s\n' "$GITHUB_SHA" > reports/source-commit.txt
           python3 scripts/check_security.py reports/vulnerabilities.json > reports/security-gate.json
+          (cd reports && sha256sum *.json *.txt *.log > SHA256SUMS)
+      - name: Publish inspected GPU-unvalidated candidate
+        if: inputs.publish
+        shell: bash
+        env:
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          repository="ghcr.io/${GITHUB_REPOSITORY,,}"
+          tag="$repository:candidate-${GITHUB_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          config=$(mktemp -d)
+          anonymous=$(mktemp -d)
+          trap 'rm -rf "$config" "$anonymous"' EXIT
+          export DOCKER_CONFIG="$config"
+          printf '%s' "$REGISTRY_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          unset REGISTRY_TOKEN
+          expected=$(cat reports/image-id.txt)
+          test "$(docker image inspect --format '{{.Id}}' colmap-runtime:candidate)" = "$expected"
+          docker tag colmap-runtime:candidate "$tag"
+          docker push "$tag"
+          reference=$(docker image inspect --format '{{index .RepoDigests 0}}' "$tag")
+          case "$reference" in "$repository"@sha256:*) ;; *) echo 'Unexpected published reference' >&2; exit 1;; esac
+          printf '%s\n' "$reference" > reports/published-image.txt
+          # New GHCR packages may require the owner to enable public visibility.
+          # A private push must never be reported as anonymously deployable.
+          docker --config "$anonymous" manifest inspect "$reference" > reports/anonymous-manifest.json
+          docker --config "$anonymous" pull "$reference"
+          test "$(docker image inspect --format '{{.Id}}' "$reference")" = "$expected"
+          docker run --rm --network none --entrypoint python3.14 "$reference" \
+            /opt/colmap-runtime/verify_runtime.py --mode cpu --require-installer-free --output /tmp/published-check.json \
+            | tee reports/published-import-check.json
           (cd reports && sha256sum *.json *.txt *.log > SHA256SUMS)
       - name: Retain evidence even after failure
         if: always()

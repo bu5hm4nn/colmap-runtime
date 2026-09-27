@@ -69,9 +69,24 @@ startup explicitly if SSH is needed, generating unique host keys with
 directory when needed. Compatibility with the host driver and GPU must be tested
 on the intended system.
 
+## Candidate publication
+
+Publication is manual: enable `publish` and, after reviewing the notices, explicitly
+confirm `accept_redistribution_terms`. Both default to false. The workflow publishes
+only after its CPU, layer-audit and security gates pass, using a unique candidate
+tag. It records the digest, verifies anonymous access and repeats verification
+against that digest. A new GHCR package may need its visibility set to public by
+the repository owner. A pushed but private package is not considered ready.
+
+Candidates remain GPU-unvalidated until an actual GPU test passes. Registry login
+uses only the workflow's short-lived token; it is not passed to Docker builds.
+Package-write permission is job-wide, not isolated to the publication step.
+A failed anonymous-access check leaves the pushed candidate in the registry;
+it does not roll back the push or establish public deployability.
+
 ## Third-party software
 
 Dependencies retain their own licences, including NVIDIA CUDA redistribution
-conditions. See `image/THIRD_PARTY_NOTICES.md`. Publication remains disabled pending
-review of those conditions and security results. This repository does not relicense
+conditions. See `image/THIRD_PARTY_NOTICES.md`. Publication requires publisher acknowledgement of those conditions and passing
+security gates. This repository does not relicense
 third-party binaries.

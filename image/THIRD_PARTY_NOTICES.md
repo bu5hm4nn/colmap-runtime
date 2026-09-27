@@ -43,6 +43,7 @@ are not superseded by this document. Preserve all upstream notices.
 ## Publication status
 
 CPU validation does not settle redistribution rights or security. Publication is
-currently disabled while the publisher reviews conditions, component notices,
-all-layer secret checks and vulnerability results. No legal-compliance guarantee
-is made by this generated inventory or automated testing.
+off by default and requires explicit publisher acknowledgement of redistribution
+conditions, plus passing CPU, all-layer pattern-audit and vulnerability gates.
+No legal-compliance guarantee is made by this inventory, acknowledgement input
+or automated testing.

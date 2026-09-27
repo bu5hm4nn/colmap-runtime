@@ -38,6 +38,14 @@ class BuildContractTests(unittest.TestCase):
         self.assertIn('pip check', dockerfile)
         self.assertIn('verify_runtime.py --mode cpu', dockerfile)
 
+    def test_publication_requires_terms_and_follows_security_checks(self):
+        workflow=(ROOT/'.github/workflows/build.yml').read_text()
+        self.assertIn('accept_redistribution_terms:', workflow)
+        self.assertIn('packages: write', workflow)
+        self.assertLess(workflow.index('scripts/check_security.py'), workflow.index('docker push'))
+        self.assertIn('docker --config "$anonymous" manifest inspect', workflow)
+        self.assertIn('candidate-${GITHUB_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}', workflow)
+
     def test_workflow_does_not_publish_by_default(self):
         workflow = (ROOT / '.github/workflows/build.yml').read_text()
         self.assertIn('workflow_dispatch:', workflow)
