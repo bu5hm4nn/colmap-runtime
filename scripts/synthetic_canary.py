@@ -75,6 +75,12 @@ def validate_points(points):
     return {'points':len(points),'median_depth_error':median,'p95_depth_error':p95}
 
 
+def fuse_points(native, output_path, workspace_path, options):
+    # The binding defaults to a binary reconstruction DIRECTORY, unlike the CLI.
+    return native.stereo_fusion(output_path, workspace_path, input_type='geometric',
+                               options=options, output_type='ply')
+
+
 def worker(output, cpu_only=False):
     import pycolmap as pc
     if not pc.has_cuda:
@@ -108,7 +114,7 @@ def worker(output, cpu_only=False):
         return
     pc.patch_match_stereo(dense,options=options)
     fused=output/'fused.ply'
-    cloud=pc.stereo_fusion(fused,dense,input_type='geometric',options=fusion_options)
+    cloud=fuse_points(pc,fused,dense,fusion_options)
     quality=validate_points(p.xyz for p in cloud.points3D.values())
     if not fused.is_file() or fused.stat().st_size<1000:
         raise ValueError('Fused output missing or truncated')

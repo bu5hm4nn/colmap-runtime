@@ -2,7 +2,7 @@ import importlib.util
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, Mock
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -15,6 +15,14 @@ class SyntheticCanaryTests(unittest.TestCase):
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         return module
+
+    def test_fusion_requests_ply_not_default_binary_directory(self):
+        module=self.load()
+        native=Mock()
+        options={'min_num_pixels':2}
+        module.fuse_points(native,Path('fused.ply'),Path('dense'),options)
+        native.stereo_fusion.assert_called_once_with(Path('fused.ply'),Path('dense'),
+            input_type='geometric',options=options,output_type='ply')
 
     def test_cpu_api_check_is_explicit_and_worker_is_bounded(self):
         module=self.load()
