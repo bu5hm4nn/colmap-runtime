@@ -1,0 +1,89 @@
+name: Build runtime candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publication is gated until CPU, licence and layer review pass
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: colmap-runtime-build
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Publication gate
+        if: inputs.publish
+        run: |
+          echo 'Publication remains blocked until candidate evidence and redistribution review are accepted.' >&2
+          exit 1
+      - name: Test build contract
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: python3 -m unittest discover -s tests -v
+      - name: Build CPU-validated candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          printf '%s' 'BUILD_CONTEXT_EXCLUSION_CANARY' > image/.env.canary
+          docker build --pull --platform linux/amd64 --progress=plain \
+            --tag colmap-runtime:candidate image 2>&1 | tee reports/build.log
+          docker image inspect colmap-runtime:candidate | python3 scripts/public_metadata.py > reports/image-inspect.json
+          docker history --no-trunc colmap-runtime:candidate > reports/image-history.txt
+          cid=$(docker create colmap-runtime:candidate)
+          trap 'docker rm -f "$cid" >/dev/null' EXIT
+          for file in runtime-manifest.json runtime-lock.json system-packages.txt python-packages.txt; do
+            docker cp "$cid:/opt/colmap-runtime/$file" "reports/$file"
+          done
+          docker run --rm --network none --entrypoint python3.14 colmap-runtime:candidate \
+            /opt/colmap-runtime/verify_runtime.py --mode cpu --output /tmp/cpu-check.json \
+            | tee reports/offline-import-check.json
+      - name: Audit all layers and context exclusion
+        shell: bash
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/colmap-candidate.tar"
+          trap 'rm -f "$archive"' EXIT
+          docker save colmap-runtime:candidate -o "$archive"
+          python3 scripts/audit_image.py "$archive" | tee reports/layer-audit.json
+      - name: Generate SBOM
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          version: v0.74.0
+          scan-type: image
+          image-ref: colmap-runtime:candidate
+          format: cyclonedx
+          output: reports/sbom.cdx.json
+          timeout: 10m
+          cache: false
+      - name: Record vulnerability findings without silently accepting them
+        shell: bash
+        run: |
+          set -euo pipefail
+          trivy image --scanners vuln --format json --timeout 10m \
+            --output reports/vulnerabilities.json colmap-runtime:candidate
+          docker image inspect --format '{{.Id}}' colmap-runtime:candidate > reports/image-id.txt
+          printf '%s\n' "$GITHUB_SHA" > reports/source-commit.txt
+          (cd reports && sha256sum *.json *.txt > SHA256SUMS)
+      - name: Retain evidence even after failure
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: runtime-evidence-${{ github.run_id }}
+          path: reports/
+          if-no-files-found: warn
+          retention-days: 14

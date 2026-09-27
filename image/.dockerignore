@@ -1,0 +1,6 @@
+**
+!Dockerfile
+!runtime-lock.json
+!requirements.lock
+!verify_runtime.py
+!THIRD_PARTY_NOTICES.md
