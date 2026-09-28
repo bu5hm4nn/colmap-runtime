@@ -50,6 +50,18 @@ class BuildContractTests(unittest.TestCase):
         audit = (ROOT / 'scripts/audit_image.py').read_text()
         self.assertIn('SSH_HOST_KEY_PATHS', audit)
 
+    def test_babelstream_is_pinned_and_installed(self):
+        """A measured GPU bandwidth figure must come from a pinned, proven tool."""
+        dockerfile = (ROOT / 'image/Dockerfile').read_text()
+        self.assertIn('63aab1bc42a1e953dcae26e279ab100866f8491ab5ce7167269f2ca4b16bb2fb', dockerfile)
+        self.assertIn('UoB-HPC/BabelStream/tarball/v5.0', dockerfile)
+        self.assertIn('nvidia/cuda@sha256:020bc241a628776338f4d4053fed4c38f6f7f3d7eb5919fecb8de313bb8ba47c', dockerfile)
+        self.assertIn('sha256sum -c -', dockerfile)
+        self.assertIn('COPY --from=babelstream /usr/local/bin/babelstream /usr/local/bin/babelstream', dockerfile)
+        self.assertIn('CMAKE_CUDA_ARCHITECTURES', dockerfile)
+        self.assertNotIn('-arch=native', dockerfile)
+        self.assertIn('BabelStream', (ROOT / 'image/THIRD_PARTY_NOTICES.md').read_text())
+
     def test_requirements_match_locked_hashes(self):
         lock = json.loads((ROOT / 'image/runtime-lock.json').read_text())
         lines = (ROOT / 'image/requirements.lock').read_text().splitlines()

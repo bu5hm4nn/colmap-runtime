@@ -47,3 +47,15 @@ off by default and requires explicit publisher acknowledgement of redistribution
 conditions, plus passing CPU, all-layer pattern-audit and vulnerability gates.
 No legal-compliance guarantee is made by this inventory, acknowledgement input
 or automated testing.
+
+## BabelStream (v5.0)
+
+Compiled unmodified from https://api.github.com/repos/UoB-HPC/BabelStream/tarball/v5.0
+(sha256 63aab1bc42a1e953dcae26e279ab100866f8491ab5ce7167269f2ca4b16bb2fb) and
+installed as /usr/local/bin/babelstream. Copyright 2015-16 Tom Deakin, Simon
+McIntosh-Smith, University of Bristol HPC; based on John D. McCalpin's original
+STREAM benchmark. Licence: free to use and redistribute; results may only be
+referred to as benchmark results in conformance with the run rules, and results
+from modified sources must be labelled as such. This image does not modify the
+source; the launcher records the parameters (array size, iterations, device
+count) it was run with.

@@ -30,7 +30,31 @@ RUN (python3.14 -m pip --version || python3.14 -m ensurepip) && \
     rm -f /opt/colmap-runtime/python/bin/pip*
 COPY verify_runtime.py /opt/colmap-runtime/verify_runtime.py
 
+
+# Measured GPU provenance: BabelStream (the GPU counterpart of STREAM) for
+# per-device memory bandwidth. Pinned, unmodified upstream source compiled here;
+# its licence requires published results to follow the run rules, so the
+# measurement records array size, iterations and thread/device count and the
+# binary is not patched. `nvidia/nvbandwidth` for host<->device throughput is a
+# follow-up (Apache-2.0); it needs cmake and Boost, so it is deliberately not in
+# this stage yet.
+FROM nvidia/cuda@sha256:020bc241a628776338f4d4053fed4c38f6f7f3d7eb5919fecb8de313bb8ba47c AS babelstream
+ARG BABELSTREAM_SHA256=63aab1bc42a1e953dcae26e279ab100866f8491ab5ce7167269f2ca4b16bb2fb
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        ca-certificates curl cmake make g++ && rm -rf /var/lib/apt/lists/*
+WORKDIR /build
+# Architectures cover the GPU families this launcher rents: Ampere (8.6),
+# Ada (8.9) and Blackwell (12.0). Fixed at build time; never tuned for the build host.
+RUN curl --fail --location --retry 3 https://api.github.com/repos/UoB-HPC/BabelStream/tarball/v5.0 -o babelstream.tar.gz \
+ && echo "$BABELSTREAM_SHA256  babelstream.tar.gz" | sha256sum -c - \
+ && mkdir source && tar -xzf babelstream.tar.gz -C source --strip-components=1 \
+ && cmake -S source -B build -DMODEL=cuda -DCMAKE_CUDA_ARCHITECTURES="86;89;120" -DCMAKE_BUILD_TYPE=Release \
+ && cmake --build build -j"$(nproc)" \
+ && test -n "$(find build -maxdepth 3 -type f -name babelstream | head -1)" \
+ && install -m 0755 "$(find build -maxdepth 3 -type f -name babelstream | head -1)" /usr/local/bin/babelstream
+
 FROM base AS runtime
+COPY --from=babelstream /usr/local/bin/babelstream /usr/local/bin/babelstream
 COPY --from=builder /opt/colmap-runtime /opt/colmap-runtime
 RUN python3.14 /opt/colmap-runtime/verify_runtime.py --mode cpu --require-installer-free --output /opt/colmap-runtime/runtime-manifest.json && \
     dpkg-query -W > /opt/colmap-runtime/system-packages.txt && \
