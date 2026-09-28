@@ -74,6 +74,9 @@ class BuildContractTests(unittest.TestCase):
         self.assertIn('-DCUDA_ARCH=sm_86', dockerfile)
         self.assertIn('code=sm_89', dockerfile)
         self.assertIn('code=sm_120', dockerfile)
+        # v5.0 compiles `$(MODEL)-stream`, so the CUDA binary is build/cuda-stream.
+        self.assertIn('install -m 0755 build/cuda-stream /usr/local/bin/babelstream', dockerfile)
+        self.assertNotIn('-name babelstream', dockerfile)
         self.assertNotIn('-arch=native', dockerfile)
         self.assertIn('BabelStream', (ROOT / 'image/THIRD_PARTY_NOTICES.md').read_text())
 

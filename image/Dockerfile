@@ -50,6 +50,9 @@ WORKDIR /build
 # binary carries native SASS for every GPU this launcher rents: Ampere (8.6),
 # Ada (8.9) and Blackwell (12.0). Fixed at build time; never tuned for the build
 # host. The pinned CUDA base is 12.9.1, the same CUDA version as the runtime base.
+# BabelStream v5.0 names its target `$(MODEL)-stream` (the README documents
+# `./build/<model>-stream`), so the CUDA build produces `build/cuda-stream`; it is
+# installed under the launcher's fixed /usr/local/bin/babelstream path.
 RUN curl --fail --location --retry 3 https://api.github.com/repos/UoB-HPC/BabelStream/tarball/v5.0 -o babelstream.tar.gz \
  && echo "$BABELSTREAM_SHA256  babelstream.tar.gz" | sha256sum -c - \
  && mkdir source && tar -xzf babelstream.tar.gz -C source --strip-components=1 \
@@ -58,8 +61,7 @@ RUN curl --fail --location --retry 3 https://api.github.com/repos/UoB-HPC/BabelS
       -DCUDA_EXTRA_FLAGS="-gencode=arch=compute_89,code=sm_89 -gencode=arch=compute_120,code=sm_120" \
       -DCMAKE_BUILD_TYPE=Release \
  && cmake --build build -j"$(nproc)" \
- && test -n "$(find build -maxdepth 3 -type f -name babelstream | head -1)" \
- && install -m 0755 "$(find build -maxdepth 3 -type f -name babelstream | head -1)" /usr/local/bin/babelstream
+ && install -m 0755 build/cuda-stream /usr/local/bin/babelstream
 
 FROM base AS runtime
 COPY --from=babelstream /usr/local/bin/babelstream /usr/local/bin/babelstream
