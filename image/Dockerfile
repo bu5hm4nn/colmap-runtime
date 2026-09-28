@@ -43,12 +43,20 @@ ARG BABELSTREAM_SHA256=63aab1bc42a1e953dcae26e279ab100866f8491ab5ce7167269f2ca4b
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         ca-certificates curl cmake make g++ && rm -rf /var/lib/apt/lists/*
 WORKDIR /build
-# Architectures cover the GPU families this launcher rents: Ampere (8.6),
-# Ada (8.9) and Blackwell (12.0). Fixed at build time; never tuned for the build host.
+# BabelStream v5.0's CUDA model ignores CMAKE_CUDA_ARCHITECTURES: it requires
+# CUDA_ARCH and CMAKE_CUDA_COMPILER and emits exactly one nvcc `-arch=` (see
+# src/cuda/model.cmake). `-arch=sm_86` also embeds compute_86 PTX, and the two
+# remaining rented families are added as extra --generate-code entries so one
+# binary carries native SASS for every GPU this launcher rents: Ampere (8.6),
+# Ada (8.9) and Blackwell (12.0). Fixed at build time; never tuned for the build
+# host. The pinned CUDA base is 12.9.1, the same CUDA version as the runtime base.
 RUN curl --fail --location --retry 3 https://api.github.com/repos/UoB-HPC/BabelStream/tarball/v5.0 -o babelstream.tar.gz \
  && echo "$BABELSTREAM_SHA256  babelstream.tar.gz" | sha256sum -c - \
  && mkdir source && tar -xzf babelstream.tar.gz -C source --strip-components=1 \
- && cmake -S source -B build -DMODEL=cuda -DCMAKE_CUDA_ARCHITECTURES="86;89;120" -DCMAKE_BUILD_TYPE=Release \
+ && cmake -S source -B build -DMODEL=cuda \
+      -DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc -DCUDA_ARCH=sm_86 \
+      -DCUDA_EXTRA_FLAGS="-gencode=arch=compute_89,code=sm_89 -gencode=arch=compute_120,code=sm_120" \
+      -DCMAKE_BUILD_TYPE=Release \
  && cmake --build build -j"$(nproc)" \
  && test -n "$(find build -maxdepth 3 -type f -name babelstream | head -1)" \
  && install -m 0755 "$(find build -maxdepth 3 -type f -name babelstream | head -1)" /usr/local/bin/babelstream

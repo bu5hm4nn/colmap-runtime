@@ -51,14 +51,29 @@ class BuildContractTests(unittest.TestCase):
         self.assertIn('SSH_HOST_KEY_PATHS', audit)
 
     def test_babelstream_is_pinned_and_installed(self):
-        """A measured GPU bandwidth figure must come from a pinned, proven tool."""
+        """A measured GPU bandwidth figure must come from a pinned, proven tool.
+
+        BabelStream v5.0's CUDA model ignores CMAKE_CUDA_ARCHITECTURES: it
+        requires CUDA_ARCH and CMAKE_CUDA_COMPILER and emits one nvcc -arch=
+        (src/cuda/model.cmake). The other rented GPU families must therefore be
+        added as explicit --generate-code entries, or the binary only runs on
+        one architecture.
+        """
         dockerfile = (ROOT / 'image/Dockerfile').read_text()
         self.assertIn('63aab1bc42a1e953dcae26e279ab100866f8491ab5ce7167269f2ca4b16bb2fb', dockerfile)
         self.assertIn('UoB-HPC/BabelStream/tarball/v5.0', dockerfile)
         self.assertIn('nvidia/cuda@sha256:020bc241a628776338f4d4053fed4c38f6f7f3d7eb5919fecb8de313bb8ba47c', dockerfile)
         self.assertIn('sha256sum -c -', dockerfile)
         self.assertIn('COPY --from=babelstream /usr/local/bin/babelstream /usr/local/bin/babelstream', dockerfile)
-        self.assertIn('CMAKE_CUDA_ARCHITECTURES', dockerfile)
+        # BabelStream's own required flags, not CMake's ignored CMAKE_CUDA_ARCHITECTURES.
+        self.assertIn('-DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc', dockerfile)
+        self.assertNotIn('-DCMAKE_CUDA_ARCHITECTURES', dockerfile)
+        # Every rented family must have native code: Ampere, Ada and Blackwell.
+        # Ampere comes from -DCUDA_ARCH=sm_86 (which also embeds compute_86 PTX);
+        # the other two are explicit --generate-code entries.
+        self.assertIn('-DCUDA_ARCH=sm_86', dockerfile)
+        self.assertIn('code=sm_89', dockerfile)
+        self.assertIn('code=sm_120', dockerfile)
         self.assertNotIn('-arch=native', dockerfile)
         self.assertIn('BabelStream', (ROOT / 'image/THIRD_PARTY_NOTICES.md').read_text())
 
