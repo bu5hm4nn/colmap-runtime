@@ -1,5 +1,7 @@
 import json
 from pathlib import Path
+import subprocess
+import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -37,6 +39,37 @@ class BuildContractTests(unittest.TestCase):
         # "generate every missing host-key type" command; a bare delete leaves
         # the image keyless and Vast's sshd then exits on first start.
         self.assertIn('ssh-keygen -A', dockerfile)
+        # The rotation must be an OS-level hook that runs before sshd starts, not
+        # a dependency on a platform-specific startup mechanism.
+        wrapper = (ROOT / 'image/ssh-service-wrapper.sh').read_text()
+        self.assertIn('exec /etc/init.d/ssh.dist', wrapper)
+        rotate = (ROOT / 'image/ssh-host-keys-rotate.sh').read_text()
+        self.assertIn('rm -f "$prefix/etc/ssh"/ssh_host_*_key', rotate)
+        self.assertIn('ssh-keygen -A -f "$prefix"', rotate)
+        self.assertIn('exit 0', rotate)   # idempotent via the marker
+        self.assertIn('mv /etc/init.d/ssh /etc/init.d/ssh.dist', dockerfile)
+        self.assertIn('/usr/local/lib/colmap-runtime/ssh-service-wrapper.sh', dockerfile)
+
+    def test_host_key_rotation_is_first_start_only(self):
+        """Behaviour, not text: rotate once per container, then stay stable so a
+        client's pinned known_hosts entry keeps matching."""
+        rotate = ROOT / 'image/ssh-host-keys-rotate.sh'
+        with tempfile.TemporaryDirectory() as tmp:
+            ssh_dir = Path(tmp) / 'etc/ssh'
+            ssh_dir.mkdir(parents=True)
+            (Path(tmp) / 'run').mkdir()
+            marker = Path(tmp) / 'run/rotated'
+            for kind in ('ed25519', 'rsa'):
+                subprocess.run(['ssh-keygen', '-q', '-t', kind, '-N', '',
+                                '-f', str(ssh_dir / f'ssh_host_{kind}_key')], check=True)
+            stock = (ssh_dir / 'ssh_host_ed25519_key').read_bytes()
+            subprocess.run(['sh', str(rotate), tmp, str(marker)], check=True)
+            rotated = (ssh_dir / 'ssh_host_ed25519_key').read_bytes()
+            self.assertNotEqual(stock, rotated)
+            self.assertTrue(marker.exists())
+            self.assertEqual(len(list(ssh_dir.glob('ssh_host_*_key'))), 3)
+            subprocess.run(['sh', str(rotate), tmp, str(marker)], check=True)
+            self.assertEqual(rotated, (ssh_dir / 'ssh_host_ed25519_key').read_bytes())
 
     def test_requirements_match_locked_hashes(self):
         lock = json.loads((ROOT / 'image/runtime-lock.json').read_text())
@@ -48,7 +81,9 @@ class BuildContractTests(unittest.TestCase):
     def test_build_context_is_allowlisted(self):
         ignore = (ROOT / 'image/.dockerignore').read_text().splitlines()
         self.assertEqual(ignore[0], '**')
-        self.assertEqual(set(ignore[1:]), {'!Dockerfile', '!runtime-lock.json', '!requirements.lock', '!verify_runtime.py', '!THIRD_PARTY_NOTICES.md'})
+        self.assertEqual(set(ignore[1:]), {'!Dockerfile', '!runtime-lock.json', '!requirements.lock',
+                                          '!verify_runtime.py', '!THIRD_PARTY_NOTICES.md',
+                                          '!ssh-host-keys-rotate.sh', '!ssh-service-wrapper.sh'})
         dockerfile = (ROOT / 'image/Dockerfile').read_text()
         self.assertNotIn('COPY . ', dockerfile)
         self.assertNotIn('COPY ..', dockerfile)

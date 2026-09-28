@@ -9,6 +9,16 @@ RUN apt-get update && \
     libgl1 libopengl0 libglib2.0-0t64 libgomp1 libstdc++6 && \
     rm -rf /var/lib/apt/lists/* && mkdir -p /run/sshd /opt/colmap-runtime && \
     ssh-keygen -A
+COPY ssh-host-keys-rotate.sh ssh-service-wrapper.sh /usr/local/lib/colmap-runtime/
+# Host keys ship stock (above) so sshd's first start cannot fail for lack of them;
+# the wrapper rotates them per container before sshd starts. Debian's init script
+# does not generate missing host keys (verified against debian/ssh.init), so the
+# rotation cannot be delegated to it - it is wrapped instead.
+RUN chmod 0755 /usr/local/lib/colmap-runtime/ssh-host-keys-rotate.sh \
+                /usr/local/lib/colmap-runtime/ssh-service-wrapper.sh && \
+    mv /etc/init.d/ssh /etc/init.d/ssh.dist && \
+    printf '%s\n' '#!/bin/sh' 'exec /usr/local/lib/colmap-runtime/ssh-service-wrapper.sh "$@"' \
+      > /etc/init.d/ssh && chmod 0755 /etc/init.d/ssh
 
 ENV PATH="/opt/colmap-runtime/python/bin:${PATH}" \
     PYTHONNOUSERSITE=1 PYTHONDONTWRITEBYTECODE=1 PIP_DISABLE_PIP_VERSION_CHECK=1 \
