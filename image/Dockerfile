@@ -8,7 +8,7 @@ RUN apt-get update && \
     ca-certificates curl openssh-server libsm6 libice6 libx11-6 libxext6 \
     libgl1 libopengl0 libglib2.0-0t64 libgomp1 libstdc++6 && \
     rm -rf /var/lib/apt/lists/* && mkdir -p /run/sshd /opt/colmap-runtime && \
-    rm -f /etc/ssh/ssh_host_*
+    ssh-keygen -A
 
 ENV PATH="/opt/colmap-runtime/python/bin:${PATH}" \
     PYTHONNOUSERSITE=1 PYTHONDONTWRITEBYTECODE=1 PIP_DISABLE_PIP_VERSION_CHECK=1 \

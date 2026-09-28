@@ -21,6 +21,23 @@ class BuildContractTests(unittest.TestCase):
         self.assertNotIn('CUDA_CACHE_DISABLE=1', dockerfile)
         self.assertFalse(lock['rebuild_bit_identical'])
 
+    def test_image_does_not_break_vast_ssh_bootstrap(self):
+        """Incident 2026-09-28: deleting the SSH host keys made Vast's `sshd` start
+        fail ("no hostkeys available -- exiting") and its port-forward never
+        recovered, so readiness polling saw `connection refused` for the whole
+        window. A stock Ubuntu + openssh-server install ships host keys; the image
+        must not deviate from that."""
+        dockerfile = (ROOT / 'image/Dockerfile').read_text()
+        for forbidden in ('rm -f /etc/ssh/ssh_host', 'rm -rf /etc/ssh/ssh_host',
+                          'ssh-keygen -R', 'PasswordAuthentication yes'):
+            self.assertNotIn(forbidden, dockerfile)
+        self.assertIn('openssh-server', dockerfile)
+        self.assertIn('mkdir -p /run/sshd', dockerfile)
+        # Host keys must exist at build time. `ssh-keygen -A` is the safe
+        # "generate every missing host-key type" command; a bare delete leaves
+        # the image keyless and Vast's sshd then exits on first start.
+        self.assertIn('ssh-keygen -A', dockerfile)
+
     def test_requirements_match_locked_hashes(self):
         lock = json.loads((ROOT / 'image/runtime-lock.json').read_text())
         lines = (ROOT / 'image/requirements.lock').read_text().splitlines()
