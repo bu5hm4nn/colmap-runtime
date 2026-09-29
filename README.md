@@ -44,6 +44,20 @@ package installation is intentionally unavailable. **Rebuilds are not
 bit-identical**; use published images by immutable digest. Exact Python and system
 package inventories are generated during the build.
 
+### BabelStream host ISA portability
+
+`/usr/local/bin/babelstream` is compiled from pinned BabelStream v5.0 source at
+build time. BabelStream's top-level CMake defaults the host release flags to
+`-O3 -march=native`, so a build that does not override them silently adopts the
+build host's instruction set and can emit AVX-512. That binary then dies with
+SIGILL (rc 132) immediately after printing its header on any rented host without
+AVX-512 (Broadwell Xeon E5 v4, EPYC Zen2) — it does not fail loudly, it silently
+removes the per-device GPU-bandwidth figure from the run. The build pins
+`-DRELEASE_FLAGS="-O3;-march=x86-64-v2"` (the SSE4.2 x86-64 baseline that every
+amd64 host this launcher rents supports) and, before installing the binary,
+disassembles it and fails if AVX-512 indicators (zmm/mask registers or EVEX-only
+mnemonics) remain. CUDA device targets (sm_70/75/86/89/120) are unaffected.
+
 ## Validation
 
 The build checks package versions, `pip check`, native imports and CUDA build

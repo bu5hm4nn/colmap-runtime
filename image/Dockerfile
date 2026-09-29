@@ -52,8 +52,26 @@ WORKDIR /build
 # memory-bandwidth axis: a V100 has ~900 GB/s HBM2 and a T4 ~320 GB/s, and CUDA
 # 12.9 still supports building for both (they become unsupported in the next
 # major toolkit). Without these entries the measured bandwidth figure is simply
-# absent on those hosts. Fixed at build time; never tuned for the build
-# host. The pinned CUDA base is 12.9.1, the same CUDA version as the runtime base.
+# absent on those hosts. GPU device code is fixed at build time and never tuned
+# for the build host; the CUDA base is pinned to 12.9.1, the same CUDA version as
+# the runtime base.
+#
+# Host ISA portability (incident 2026-09-29). BabelStream v5.0's top-level
+# CMakeLists.txt sets `DEFAULT_RELEASE_FLAGS -O3 -march=native` (line 49) and
+# applies it to every translation unit of the target, including the
+# g++-compiled src/main.cpp and nvcc's host side. An unpinned build therefore
+# adopts the build host's ISA: the GitHub runner has AVX-512, so the a9d97999
+# image carried AVX-512 host instructions that SIGILL (rc 132) right after the
+# header on every rented host without AVX-512 (Broadwell Xeon E5 v4, EPYC Zen2),
+# silently dropping the GPU-bandwidth figure. `RELEASE_FLAGS` is BabelStream's
+# documented override for that default; it is set to `-O3;-march=x86-64-v2` (the
+# SSE4.2 x86-64 baseline every amd64 host this launcher rents supports). This
+# replaces `-march=native` for host code in both languages while leaving the
+# CUDA device targets above untouched. The objdump check after the build scans
+# the host disassembly for zmm registers, mask registers, EVEX broadcast/zero
+# markers and EVEX-only mnemonics, and fails the stage if any survive. (It does
+# not scan for the raw EVEX 0x62 prefix: literal data inside .text also contains
+# 0x62 bytes -- e.g. the ASCII "ble" in "available" -- which would false-fail.)
 # BabelStream v5.0 names its target `$(MODEL)-stream` (the README documents
 # `./build/<model>-stream`), so the CUDA build produces `build/cuda-stream`; it is
 # installed under the launcher's fixed /usr/local/bin/babelstream path.
@@ -64,7 +82,12 @@ RUN curl --fail --location --retry 3 https://api.github.com/repos/UoB-HPC/BabelS
       -DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc -DCUDA_ARCH=sm_86 \
       -DCUDA_EXTRA_FLAGS="-gencode=arch=compute_70,code=sm_70 -gencode=arch=compute_75,code=sm_75 -gencode=arch=compute_89,code=sm_89 -gencode=arch=compute_120,code=sm_120" \
       -DCMAKE_BUILD_TYPE=Release \
+      -DRELEASE_FLAGS="-O3;-march=x86-64-v2" \
  && cmake --build build -j"$(nproc)" \
+ && if objdump -d build/cuda-stream | grep -Eq '%zmm|zmm[0-9]|%k[0-7]|\{z\}|1to[0-9]|vpxord|vpxorq|vmovdqu(8|16|32|64)|vpmovm2|vpmov(b2m|d2m|q2m|w2m)|vpternlog[qd]|vpermi2|vpermt2|vpcompress|vpexpand|vscatter|vrcp14|vrsqrt14|vreduce|vrange|vpmadd52|vdbpsadbw|vpconflict|vplzcnt'; then \
+        echo 'ERROR: babelstream host code contains AVX-512 (EVEX) instructions; it would SIGILL on non-AVX-512 hosts' >&2; \
+        exit 1; \
+    fi \
  && install -m 0755 build/cuda-stream /usr/local/bin/babelstream
 
 FROM base AS runtime

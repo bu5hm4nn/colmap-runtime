@@ -1,5 +1,9 @@
 import json
 from pathlib import Path
+import re
+import shutil
+import subprocess
+import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -84,6 +88,71 @@ class BuildContractTests(unittest.TestCase):
         self.assertNotIn('-name babelstream', dockerfile)
         self.assertNotIn('-arch=native', dockerfile)
         self.assertIn('BabelStream', (ROOT / 'image/THIRD_PARTY_NOTICES.md').read_text())
+
+    def test_babelstream_host_isa_is_portable(self):
+        """Incident 2026-09-29: the published a9d97999 babelstream SIGILLed
+        (rc 132) right after its header on hosts without AVX-512 (Broadwell
+        Xeon E5 v4, EPYC 7452/7532 Zen2), silently dropping the GPU-bandwidth
+        figure. BabelStream v5.0's top-level CMakeLists.txt sets
+        `DEFAULT_RELEASE_FLAGS -O3 -march=native` (line 49), so an unpinned
+        build inherits the GitHub runner's AVX-512 host ISA. The build must
+        override that with a portable baseline and assert the produced binary."""
+        dockerfile = (ROOT / 'image/Dockerfile').read_text()
+        # BabelStream's documented override for DEFAULT_RELEASE_FLAGS, pinned to
+        # the SSE4.2 x86-64 baseline instead of `-march=native`.
+        self.assertIn('-DRELEASE_FLAGS="-O3;-march=x86-64-v2"', dockerfile)
+        # No `-march=native` may survive in the cmake configure command.
+        configure = dockerfile[dockerfile.index('cmake -S source -B build'):
+                               dockerfile.index('cmake --build build')]
+        self.assertNotIn('-march=native', configure)
+        # The produced host code must be checked, and the check must run before
+        # the binary is installed, so a failing build never lands in the image.
+        self.assertRegex(dockerfile, r'objdump -d build/cuda-stream \| grep -Eq')
+        self.assertLess(dockerfile.index('objdump -d build/cuda-stream'),
+                        dockerfile.index('install -m 0755 build/cuda-stream'))
+
+    def _babelstream_isa_guard_pattern(self):
+        dockerfile = (ROOT / 'image/Dockerfile').read_text()
+        match = re.search(r"objdump -d build/cuda-stream \| grep -Eq '([^']+)'", dockerfile)
+        self.assertIsNotNone(match, 'the babelstream ISA guard must be present in the Dockerfile')
+        return match.group(1)
+
+    def test_babelstream_isa_guard_detects_avx512(self):
+        """The build-time guard must actually flag AVX-512 host code while
+        passing a portable x86-64-v2 build, so the assertion is meaningful and
+        not cosmetic. Skipped where a host toolchain is unavailable; the Docker
+        build stage always installs one (g++ pulls in objdump)."""
+        if not (shutil.which('g++') and shutil.which('objdump')):
+            self.skipTest('g++/objdump not available')
+        pattern = self._babelstream_isa_guard_pattern()
+        samples = {
+            'avx512': (
+                '#include <immintrin.h>\n'
+                '__attribute__((target("avx512f")))\n'
+                'void f512(float *a, float *b) {\n'
+                '  __m512 x = _mm512_loadu_ps(a);\n'
+                '  __m512 y = _mm512_loadu_ps(b);\n'
+                '  _mm512_storeu_ps(a, _mm512_add_ps(x, y));\n'
+                '}\n',
+                True),
+            'portable': (
+                'int f(const int *a, int n) { int s = 0; for (int i = 0; i < n; i++) s += a[i] * 3; return s; }\n',
+                False),
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            for label, (source, expect_hit) in samples.items():
+                src = Path(tmp) / f'{label}.c'
+                obj = Path(tmp) / f'{label}.o'
+                src.write_text(source)
+                try:
+                    subprocess.run(['g++', '-O3', '-march=x86-64-v2', '-c', str(src), '-o', str(obj)],
+                                   check=True, capture_output=True, text=True)
+                except (OSError, subprocess.CalledProcessError) as exc:
+                    self.skipTest(f'cannot compile the {label} sample: {exc}')
+                disassembly = subprocess.run(['objdump', '-d', str(obj)], check=True,
+                                             capture_output=True, text=True).stdout
+                self.assertEqual(bool(re.search(pattern, disassembly)), expect_hit,
+                                 f'{label} sample: guard match expected to be {expect_hit}')
 
     def test_requirements_match_locked_hashes(self):
         lock = json.loads((ROOT / 'image/runtime-lock.json').read_text())
