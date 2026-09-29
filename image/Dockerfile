@@ -45,10 +45,14 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
 WORKDIR /build
 # BabelStream v5.0's CUDA model ignores CMAKE_CUDA_ARCHITECTURES: it requires
 # CUDA_ARCH and CMAKE_CUDA_COMPILER and emits exactly one nvcc `-arch=` (see
-# src/cuda/model.cmake). `-arch=sm_86` also embeds compute_86 PTX, and the two
-# remaining rented families are added as extra --generate-code entries so one
-# binary carries native SASS for every GPU this launcher rents: Ampere (8.6),
-# Ada (8.9) and Blackwell (12.0). Fixed at build time; never tuned for the build
+# src/cuda/model.cmake). `-arch=sm_86` also embeds compute_86 PTX, and the other
+# rented families are added as extra --generate-code entries so one binary carries
+# native SASS for every GPU this launcher rents: Volta (7.0), Turing (7.5),
+# Ampere (8.6), Ada (8.9) and Blackwell (12.0). Volta and Turing matter for the
+# memory-bandwidth axis: a V100 has ~900 GB/s HBM2 and a T4 ~320 GB/s, and CUDA
+# 12.9 still supports building for both (they become unsupported in the next
+# major toolkit). Without these entries the measured bandwidth figure is simply
+# absent on those hosts. Fixed at build time; never tuned for the build
 # host. The pinned CUDA base is 12.9.1, the same CUDA version as the runtime base.
 # BabelStream v5.0 names its target `$(MODEL)-stream` (the README documents
 # `./build/<model>-stream`), so the CUDA build produces `build/cuda-stream`; it is
@@ -58,7 +62,7 @@ RUN curl --fail --location --retry 3 https://api.github.com/repos/UoB-HPC/BabelS
  && mkdir source && tar -xzf babelstream.tar.gz -C source --strip-components=1 \
  && cmake -S source -B build -DMODEL=cuda \
       -DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc -DCUDA_ARCH=sm_86 \
-      -DCUDA_EXTRA_FLAGS="-gencode=arch=compute_89,code=sm_89 -gencode=arch=compute_120,code=sm_120" \
+      -DCUDA_EXTRA_FLAGS="-gencode=arch=compute_70,code=sm_70 -gencode=arch=compute_75,code=sm_75 -gencode=arch=compute_89,code=sm_89 -gencode=arch=compute_120,code=sm_120" \
       -DCMAKE_BUILD_TYPE=Release \
  && cmake --build build -j"$(nproc)" \
  && install -m 0755 build/cuda-stream /usr/local/bin/babelstream

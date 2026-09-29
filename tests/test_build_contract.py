@@ -74,6 +74,11 @@ class BuildContractTests(unittest.TestCase):
         self.assertIn('-DCUDA_ARCH=sm_86', dockerfile)
         self.assertIn('code=sm_89', dockerfile)
         self.assertIn('code=sm_120', dockerfile)
+        # Volta and Turing too: the campaign rents V100 (900 GB/s HBM2) and T4
+        # hosts, and CUDA 12.9 still supports building for both. Without these the
+        # measured bandwidth figure is absent on those hosts.
+        self.assertIn('code=sm_70', dockerfile)
+        self.assertIn('code=sm_75', dockerfile)
         # v5.0 compiles `$(MODEL)-stream`, so the CUDA binary is build/cuda-stream.
         self.assertIn('install -m 0755 build/cuda-stream /usr/local/bin/babelstream', dockerfile)
         self.assertNotIn('-name babelstream', dockerfile)
