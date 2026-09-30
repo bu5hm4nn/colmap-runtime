@@ -7,10 +7,13 @@ RUN apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     ca-certificates curl openssh-server libsm6 libice6 libx11-6 libxext6 \
     libgl1 libopengl0 libglib2.0-0t64 libgomp1 libstdc++6 \
-    libboost-program-options-dev libboost-graph-dev libboost-system-dev \
-    libeigen3-dev libceres-dev libgoogle-glog-dev libgflags-dev \
-    libfreeimage-dev libmetis-dev libopenimageio-dev libsqlite3-dev \
-    libcurl4-openssl-dev libssl-dev libglew-dev && \
+    libboost-program-options1.83.0 libboost-graph1.83.0 libboost-system1.83.0 \
+    libceres4t64 libgoogle-glog0v6t64 libgflags2.2 \
+    libfreeimage3 libmetis5 libopenimageio2.4t64 libsqlite3-0 \
+    libcurl4t64 libssl3t64 libglew2.2 && \
+    dpkg-query -W -f='${binary:Package} ${db:Status-Status}\n' > /tmp/runtime-package-status && \
+    awk '$2 == "installed" && $1 ~ /-dev(:[^ ]+)?$/ { print "ERROR: runtime development package: " $1; bad=1 } END { exit bad }' /tmp/runtime-package-status && \
+    rm -f /tmp/runtime-package-status && \
     rm -rf /var/lib/apt/lists/* && mkdir -p /run/sshd /opt/colmap-runtime && \
     ssh-keygen -A
 ENV PATH="/opt/colmap-runtime/python/bin:${PATH}" \

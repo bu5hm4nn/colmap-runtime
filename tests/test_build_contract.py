@@ -199,6 +199,14 @@ class BuildContractTests(unittest.TestCase):
         # the empty opencv4 include dir or COLMAP's configure fails.
         self.assertIn('openimageio-tools', dockerfile)
         self.assertIn('mkdir -p /usr/include/opencv4', dockerfile)
+        # Development packages must never enter a runtime ancestor layer.
+        base = dockerfile.split('AS pycolmap-builder', 1)[0]
+        installs = base.split('apt-get install', 1)[1].split('&&', 1)[0]
+        self.assertNotIn('-dev', installs)
+        self.assertIn('libstdc++6', installs)
+        self.assertIn('libceres4t64', installs)
+        self.assertIn('libopenimageio2.4t64', installs)
+        self.assertIn('ERROR: runtime development package:', base)
         # Keep backend-provided package discovery intact; only locate COLMAP.
         wheel_step = dockerfile.split('RUN mkdir -p /opt/wheels &&', 1)[1].split('FROM base AS builder', 1)[0]
         self.assertIn('CC=/usr/bin/gcc CXX=/usr/bin/g++', wheel_step)

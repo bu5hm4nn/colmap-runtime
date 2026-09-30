@@ -46,6 +46,17 @@ GPU canary and a per-image comparison against a single-worker run.
 
 Source-build integration requirements (covered by the build contract):
 
+- Keep development headers/toolchains in `pycolmap-builder` only. The runtime
+  ancestor installs shared-library packages (`libstdc++6`, `libceres4t64`,
+  `libopenimageio2.4t64`, etc.), not their `-dev` counterparts. A post-APT
+  package-inventory check fails the build if any installed `-dev` package leaks
+  into that ancestor, including `linux-libc-dev`/`libc6-dev`/`libstdc++-13-dev`.
+  `apt-get upgrade` does not normally install new packages; the check also
+  covers dependency changes from the subsequent runtime-library install.
+  No holds are used: security updates remain enabled. Rebuilds remain explicitly
+  **not bit-identical** (`runtime-lock.json`); record inventories and deploy by
+  image digest rather than claiming reproducibility from package holds.
+
 - Install `openimageio-tools` in the builder: Ubuntu's OpenImageIO CMake
   exports reference `/usr/bin/iconvert` and other tools that `libopenimageio-dev`
   alone does not install.
