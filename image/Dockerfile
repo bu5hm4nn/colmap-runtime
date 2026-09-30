@@ -88,7 +88,7 @@ RUN mkdir -p /opt/wheels && \
     CC=/usr/bin/gcc CXX=/usr/bin/g++ \
     /opt/pybuild/python/bin/python3.14 -m pip wheel /build/source \
         --no-build-isolation --no-deps --wheel-dir /opt/wheels \
-        --config-settings=cmake.define.CMAKE_PREFIX_PATH=/opt/colmap \
+        --config-settings=cmake.define.colmap_DIR=/opt/colmap/share/colmap \
         --config-settings=cmake.define.GENERATE_STUBS=OFF && \
     ls -l /opt/wheels
 

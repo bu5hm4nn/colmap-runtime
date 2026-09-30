@@ -199,6 +199,11 @@ class BuildContractTests(unittest.TestCase):
         # the empty opencv4 include dir or COLMAP's configure fails.
         self.assertIn('openimageio-tools', dockerfile)
         self.assertIn('mkdir -p /usr/include/opencv4', dockerfile)
+        # Keep backend-provided package discovery intact; only locate COLMAP.
+        wheel_step = dockerfile.split('RUN mkdir -p /opt/wheels &&', 1)[1].split('FROM base AS builder', 1)[0]
+        self.assertIn('CC=/usr/bin/gcc CXX=/usr/bin/g++', wheel_step)
+        self.assertIn('--config-settings=cmake.define.colmap_DIR=/opt/colmap/share/colmap', wheel_step)
+        self.assertNotIn('cmake.define.CMAKE_PREFIX_PATH=', wheel_step)
         # The source-built wheel replaces the pinned wheel in the runtime stage.
         self.assertIn('pycolmap==4.2.0', dockerfile)
         self.assertIn('COPY --from=pycolmap-builder /opt/wheels/', dockerfile)

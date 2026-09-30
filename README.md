@@ -44,6 +44,23 @@ image build proves the patched sources compile, not that the kernels produce
 correct depth/normal maps or that two workers overlap. That requires the separate
 GPU canary and a per-image comparison against a single-worker run.
 
+Source-build integration requirements (covered by the build contract):
+
+- Install `openimageio-tools` in the builder: Ubuntu's OpenImageIO CMake
+  exports reference `/usr/bin/iconvert` and other tools that `libopenimageio-dev`
+  alone does not install.
+- Create an empty `/usr/include/opencv4`, following COLMAP's Ubuntu CI/docs.
+  OpenImageIO exports this include path even though COLMAP does not use its
+  OpenCV functionality.
+- Set `CC=/usr/bin/gcc CXX=/usr/bin/g++` for the wheel build. scikit-build-core
+  otherwise inherits standalone Python's clang compiler preference, but this
+  builder uses the GNU toolchain.
+- Set only `cmake.define.colmap_DIR=/opt/colmap/share/colmap`, where upstream
+  installs `colmap-config.cmake`. Do not replace `CMAKE_PREFIX_PATH` with
+  `/opt/colmap`: that overrides scikit-build-core's package discovery and makes
+  the pip-installed `pybind11Config.cmake` undiscoverable. Keep the two-stage
+  COLMAP install followed by wheel build; neither step bypasses runtime gates.
+
 ## Environment
 
 - NVIDIA CUDA 12.9.1 runtime / Ubuntu 24.04, amd64 base pinned by digest.
