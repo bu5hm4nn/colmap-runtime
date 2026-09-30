@@ -82,7 +82,10 @@ RUN echo "${COLMAP_TARBALL_SHA256}  colmap.tar.gz" > /tmp/sums && \
     cmake --build build -j"$(nproc)" && cmake --install build
 # Build the pycolmap wheel against the patched, installed COLMAP. Stub
 # generation is disabled so no extra stub tooling is required.
+# Override Python's build-time clang preference inherited by scikit-build-core;
+# use the installed GNU toolchain, matching the COLMAP libraries above.
 RUN mkdir -p /opt/wheels && \
+    CC=/usr/bin/gcc CXX=/usr/bin/g++ \
     /opt/pybuild/python/bin/python3.14 -m pip wheel /build/source \
         --no-build-isolation --no-deps --wheel-dir /opt/wheels \
         --config-settings=cmake.define.CMAKE_PREFIX_PATH=/opt/colmap \
