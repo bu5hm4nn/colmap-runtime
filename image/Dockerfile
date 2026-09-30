@@ -42,6 +42,10 @@ ENV DEBIAN_FRONTEND=noninteractive
 # OpenImageIOConfig.cmake exports imported executable targets and CMake refuses
 # to configure if their files are absent. libopenimageio-dev alone does not
 # install them, so COLMAP's find_package(OpenImageIO) fails without this.
+# Ubuntu's OpenImageIO config also hardcodes the OpenCV include dir in its
+# INTERFACE_INCLUDE_DIRECTORIES even though COLMAP uses none of OIIO's OpenCV
+# functionality, so an empty /usr/include/opencv4 must exist (the same fix as
+# COLMAP's own docs/CI).
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates curl git cmake ninja-build build-essential \
         libboost-program-options-dev libboost-graph-dev libboost-system-dev \
@@ -49,7 +53,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libfreeimage-dev libmetis-dev libopenimageio-dev openimageio-tools \
         libsqlite3-dev \
         libcurl4-openssl-dev libssl-dev libglew-dev && \
-    rm -rf /var/lib/apt/lists/*
+    rm -rf /var/lib/apt/lists/* && \
+    mkdir -p /usr/include/opencv4
 # Pinned CPython 3.14.7 (the same archive the runtime builder installs), used
 # only to build the wheel; it is not copied into the final image.
 RUN curl --fail --location --retry 3 \
