@@ -4,3 +4,4 @@
 !requirements.lock
 !verify_runtime.py
 !THIRD_PARTY_NOTICES.md
+!patch_match_cuda.2streams.patch

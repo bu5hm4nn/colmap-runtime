@@ -9,7 +9,9 @@ nvidia-cuda-runtime-cu12==12.9.79 --hash=sha256:25bba2dfb01d48a9b59ca474a1ac43c6
 nvidia-curand-cu12==10.3.10.19 --hash=sha256:49b274db4780d421bd2ccd362e1415c13887c53c214f0d4b761752b8f9f6aa1e
 packaging==26.3 --hash=sha256:d7193f7c8e4e93f444fde0262bf90af30e16fa0ad0ad44cb553c87339b23cd1c
 pillow==12.3.0 --hash=sha256:251bf95b67017e27b13d82f5b326234ca62d70f9cf4c2b9032de2358a3b12c7b
-pycolmap-cuda12==4.2.0 --hash=sha256:ebf769f7ba2357a9c43368f88aff46a969b079300e66519abaf0b3314c9e6f2d
+# pycolmap is deliberately absent: benchmark-v4 installs the source-built,
+# patched PyCOLMAP produced by the pycolmap-builder stage. Its source identity
+# is pinned in runtime-lock.json (source_builds).
 pyparsing==3.3.2 --hash=sha256:850ba148bd908d7e2411587e247a1e4f0327839c40e2e5e6d05a007ecc69911d
 python-dateutil==2.9.0.post0 --hash=sha256:a8b2bc7bffae282281c8140a97d3aa9c14da0b136dfe83f850eea9a5f7470427
 scipy==1.18.1 --hash=sha256:ac0333bdf38309aa3dcbe7e3fa7ea29e7a2c37c6ea306a757b700ded8e4596ad

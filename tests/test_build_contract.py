@@ -70,8 +70,12 @@ class BuildContractTests(unittest.TestCase):
         self.assertIn('sha256sum -c -', dockerfile)
         self.assertIn('COPY --from=babelstream /usr/local/bin/babelstream /usr/local/bin/babelstream', dockerfile)
         # BabelStream's own required flags, not CMake's ignored CMAKE_CUDA_ARCHITECTURES.
-        self.assertIn('-DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc', dockerfile)
-        self.assertNotIn('-DCMAKE_CUDA_ARCHITECTURES', dockerfile)
+        # Scope the check to the BabelStream configure block: the separate
+        # pycolmap source-build stage below does use CMAKE_CUDA_ARCHITECTURES.
+        babel_configure = dockerfile[dockerfile.index('cmake -S source -B build'):
+                                     dockerfile.index('objdump -d build/cuda-stream')]
+        self.assertIn('-DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc', babel_configure)
+        self.assertNotIn('-DCMAKE_CUDA_ARCHITECTURES', babel_configure)
         # Every rented family must have native code: Ampere, Ada and Blackwell.
         # Ampere comes from -DCUDA_ARCH=sm_86 (which also embeds compute_86 PTX);
         # the other two are explicit --generate-code entries.
@@ -103,7 +107,7 @@ class BuildContractTests(unittest.TestCase):
         self.assertIn('-DRELEASE_FLAGS="-O3;-march=x86-64-v2"', dockerfile)
         # No `-march=native` may survive in the cmake configure command.
         configure = dockerfile[dockerfile.index('cmake -S source -B build'):
-                               dockerfile.index('cmake --build build')]
+                               dockerfile.index('objdump -d build/cuda-stream')]
         self.assertNotIn('-march=native', configure)
         # The produced host code must be checked, and the check must run before
         # the binary is installed, so a failing build never lands in the image.
@@ -156,15 +160,48 @@ class BuildContractTests(unittest.TestCase):
 
     def test_requirements_match_locked_hashes(self):
         lock = json.loads((ROOT / 'image/runtime-lock.json').read_text())
-        lines = (ROOT / 'image/requirements.lock').read_text().splitlines()
+        lines = [line for line in (ROOT / 'image/requirements.lock').read_text().splitlines()
+                 if line and not line.startswith('#')]
         self.assertEqual(len(lines), len(lock['wheels']))
         for wheel in lock['wheels']:
             self.assertIn(f"{wheel['name']}=={wheel['version']} --hash=sha256:{wheel['sha256']}", lines)
 
+    def test_pycolmap_is_source_built_from_pinned_patch(self):
+        """benchmark-v4 option C needs kernel surgery, so pycolmap is rebuilt
+        from a hash-pinned COLMAP 4.2.0 tarball with a hash-pinned patch instead
+        of installed from the immutable wheel. The build must verify both before
+        configuring, apply the patch before CMake, and target every rented GPU
+        family."""
+        import hashlib
+        lock = json.loads((ROOT / 'image/runtime-lock.json').read_text())
+        dockerfile = (ROOT / 'image/Dockerfile').read_text()
+        requirements = (ROOT / 'image/requirements.lock').read_text()
+        self.assertNotIn('pycolmap-cuda12', requirements)
+        builds = {build['name']: build for build in lock['source_builds']}
+        build = builds['pycolmap']
+        self.assertEqual(build['version'], '4.2.0')
+        self.assertEqual(build['commit'], 'be5e29168d4aff238409d60424812df66aac919f')
+        self.assertIn(build['sha256'], dockerfile)
+        self.assertIn(build['patch_sha256'], dockerfile)
+        patch = (ROOT / 'image/patch_match_cuda.2streams.patch').read_bytes()
+        self.assertEqual(hashlib.sha256(patch).hexdigest(), build['patch_sha256'])
+        # The verified tarball and patch must be applied before CMake configures.
+        self.assertLess(dockerfile.index('sha256sum -c /tmp/sums'),
+                        dockerfile.index('patch -p1 < /build/patch_match_cuda.2streams.patch'))
+        self.assertLess(dockerfile.index('patch -p1 < /build/patch_match_cuda.2streams.patch'),
+                        dockerfile.index('cmake -S . -B build'))
+        self.assertIn('-DCUDA_ENABLED=ON', dockerfile)
+        self.assertIn('-DCMAKE_CUDA_ARCHITECTURES="70;75;86;89;120"', dockerfile)
+        self.assertIn('-DBUILD_SHARED_LIBS=OFF', dockerfile)
+        # The source-built wheel replaces the pinned wheel in the runtime stage.
+        self.assertIn('pycolmap==4.2.0', dockerfile)
+        self.assertIn('COPY --from=pycolmap-builder /opt/wheels/', dockerfile)
+        self.assertIn('source_builds', (ROOT / 'image/verify_runtime.py').read_text())
+
     def test_build_context_is_allowlisted(self):
         ignore = (ROOT / 'image/.dockerignore').read_text().splitlines()
         self.assertEqual(ignore[0], '**')
-        self.assertEqual(set(ignore[1:]), {'!Dockerfile', '!runtime-lock.json', '!requirements.lock', '!verify_runtime.py', '!THIRD_PARTY_NOTICES.md'})
+        self.assertEqual(set(ignore[1:]), {'!Dockerfile', '!runtime-lock.json', '!requirements.lock', '!verify_runtime.py', '!THIRD_PARTY_NOTICES.md', '!patch_match_cuda.2streams.patch'})
         dockerfile = (ROOT / 'image/Dockerfile').read_text()
         self.assertNotIn('COPY . ', dockerfile)
         self.assertNotIn('COPY ..', dockerfile)

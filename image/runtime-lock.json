@@ -80,12 +80,6 @@
       "uri": "https://files.pythonhosted.org/packages/5c/44/c85361f65dbe00eea8576ee467c768d25129989efb76e94f205e9ca9bb46/pillow-12.3.0-cp314-cp314-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl"
     },
     {
-      "name": "pycolmap-cuda12",
-      "version": "4.2.0",
-      "sha256": "ebf769f7ba2357a9c43368f88aff46a969b079300e66519abaf0b3314c9e6f2d",
-      "uri": "https://files.pythonhosted.org/packages/4f/09/8717033f7c3f2842e4502c21b6bd08367b2d65a5b5dc3ba25b238ad38df4/pycolmap_cuda12-4.2.0-cp314-cp314-manylinux_2_28_x86_64.whl"
-    },
-    {
       "name": "pyparsing",
       "version": "3.3.2",
       "sha256": "850ba148bd908d7e2411587e247a1e4f0327839c40e2e5e6d05a007ecc69911d",
@@ -108,6 +102,18 @@
       "version": "1.17.0",
       "sha256": "4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274",
       "uri": "https://files.pythonhosted.org/packages/b7/ce/149a00dd41f10bc29e5921b496af8b574d8413afcd5e30dfa0ed46c2cc5e/six-1.17.0-py2.py3-none-any.whl"
+    }
+  ],
+  "source_builds": [
+    {
+      "name": "pycolmap",
+      "version": "4.2.0",
+      "source": "colmap/colmap 4.2.0 tag (source-built with CUDA, benchmark-v4 option C)",
+      "commit": "be5e29168d4aff238409d60424812df66aac919f",
+      "tarball": "https://codeload.github.com/colmap/colmap/tar.gz/refs/tags/4.2.0",
+      "sha256": "b61731fb1a4a33609e64fb353fe589d483be6a73878a5965b7d32ae23fb22fc5",
+      "patch": "patch_match_cuda.2streams.patch",
+      "patch_sha256": "c0ebc12088595049b070e00363df6ad23b0087c61a99c36660b1e7316d65dcce"
     }
   ]
 }

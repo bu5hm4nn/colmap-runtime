@@ -1,0 +1,484 @@
+diff --git a/src/colmap/mvs/patch_match_cuda.cu b/src/colmap/mvs/patch_match_cuda.cu
+index fbd9bfa..59ae2e5 100644
+--- a/src/colmap/mvs/patch_match_cuda.cu
++++ b/src/colmap/mvs/patch_match_cuda.cu
+@@ -60,10 +60,32 @@
+ namespace colmap {
+ namespace mvs {
+ 
+-// Calibration of reference image as {fx, cx, fy, cy}.
+-__constant__ float ref_K[4];
+-// Calibration of reference image as {1/fx, -cx/fx, 1/fy, -cy/fy}.
+-__constant__ float ref_inv_K[4];
++// The reference calibration used to be module-scope __constant__ globals
++// (`ref_K` / `ref_inv_K`). That state is shared by every PatchMatchCuda
++// instance in a process, so two patch-match workers on the same device
++// overwrite each other's calibration. The calibration is now passed per launch
++// as an immutable kernel argument and threaded through the device helpers that
++// read it. Values, arithmetic and operation order are unchanged.
++//
++// A kernel parameter declared as `float ref_K[4]` would decay to a pointer,
++// and the caller holds the calibration in host memory, so the address copied
++// into the launch parameter block would be a host pointer. Wrapping the four
++// values in a small struct makes CUDA copy them into the kernel parameter
++// space by value instead.
++struct RefCalibration {
++  float K[4];
++  float inv_K[4];
++};
++
++// Host-side helper: snapshot one rotated calibration into a launch argument.
++static RefCalibration MakeRefCalibration(const float* K, const float* inv_K) {
++  RefCalibration calibration;
++  for (int i = 0; i < 4; ++i) {
++    calibration.K[i] = K[i];
++    calibration.inv_K[i] = inv_K[i];
++  }
++  return calibration;
++}
+ 
+ __device__ inline void Mat33DotVec3(const float mat[9],
+                                     const float vec[3],
+@@ -94,7 +116,8 @@ __device__ inline float GenerateRandomDepth(const float depth_min,
+ __device__ inline void GenerateRandomNormal(const int row,
+                                             const int col,
+                                             curandState* rand_state,
+-                                            float normal[3]) {
++                                            float normal[3],
++                                            const float ref_inv_K[4]) {
+   // Unbiased sampling of normal, according to George Marsaglia, "Choosing a
+   // Point from the Surface of a Sphere", 1972.
+   float v1 = 0.0f;
+@@ -136,6 +159,7 @@ __device__ inline void PerturbNormal(const int row,
+                                      const float normal[3],
+                                      curandState* rand_state,
+                                      float perturbed_normal[3],
++                                     const float ref_inv_K[4],
+                                      const int num_trials = 0) {
+   // Perturbation rotation angles.
+   const float a1 = (curand_uniform(rand_state) - 0.5f) * perturbation;
+@@ -178,6 +202,7 @@ __device__ inline void PerturbNormal(const int row,
+                     normal,
+                     rand_state,
+                     perturbed_normal,
++                    ref_inv_K,
+                     num_trials + 1);
+       return;
+     } else {
+@@ -198,7 +223,8 @@ __device__ inline void PerturbNormal(const int row,
+ __device__ inline void ComputePointAtDepth(const float row,
+                                            const float col,
+                                            const float depth,
+-                                           float point[3]) {
++                                           float point[3],
++                                           const float ref_inv_K[4]) {
+   point[0] = depth * (ref_inv_K[0] * col + ref_inv_K[1]);
+   point[1] = depth * (ref_inv_K[2] * row + ref_inv_K[3]);
+   point[2] = depth;
+@@ -210,7 +236,8 @@ __device__ inline void ComputePointAtDepth(const float row,
+ __device__ inline float PropagateDepth(const float depth1,
+                                        const float normal1[3],
+                                        const float row1,
+-                                       const float row2) {
++                                       const float row2,
++                                       const float ref_inv_K[4]) {
+   // Point along first viewing ray.
+   const float x1 = depth1 * (ref_inv_K[2] * row1 + ref_inv_K[3]);
+   const float y1 = depth1;
+@@ -275,7 +302,8 @@ __device__ inline void ComposeHomography(
+     const int col,
+     const float depth,
+     const float normal[3],
+-    float H[9]) {
++    float H[9],
++    const float ref_inv_K[4]) {
+   // Calibration of source image.
+   float K[4];
+   for (int i = 0; i < 4; ++i) {
+@@ -453,10 +481,12 @@ struct PhotoConsistencyCostComputer {
+       const cudaTextureObject_t src_images_texture,
+       const cudaTextureObject_t poses_texture,
+       const float sigma_spatial,
+-      const float sigma_color)
++      const float sigma_color,
++      const float ref_inv_K[4])
+       : local_ref_image(ref_image_texture),
+         src_images_texture_(src_images_texture),
+         poses_texture_(poses_texture),
++        ref_inv_K_(ref_inv_K),
+         bilateral_weight_computer_(sigma_spatial, sigma_color) {}
+ 
+   // Maximum photo consistency cost as 1 - min(NCC).
+@@ -488,8 +518,14 @@ struct PhotoConsistencyCostComputer {
+ 
+   __device__ inline float Compute() const {
+     float tform[9];
+-    ComposeHomography(
+-        poses_texture_, src_image_idx, row, col, depth, normal, tform);
++    ComposeHomography(poses_texture_,
++                      src_image_idx,
++                      row,
++                      col,
++                      depth,
++                      normal,
++                      tform,
++                      ref_inv_K_);
+ 
+     float tform_step[8];
+     for (int i = 0; i < 8; ++i) {
+@@ -595,6 +631,7 @@ struct PhotoConsistencyCostComputer {
+  private:
+   const cudaTextureObject_t src_images_texture_;
+   const cudaTextureObject_t poses_texture_;
++  const float* ref_inv_K_;
+   const BilateralWeightComputer bilateral_weight_computer_;
+ };
+ 
+@@ -605,7 +642,9 @@ __device__ inline float ComputeGeomConsistencyCost(
+     const float col,
+     const float depth,
+     const int image_idx,
+-    const float max_cost) {
++    const float max_cost,
++    const float ref_K[4],
++    const float ref_inv_K[4]) {
+   // Extract projection matrices for source image.
+   float P[12];
+   for (int i = 0; i < 12; ++i) {
+@@ -618,7 +657,7 @@ __device__ inline float ComputeGeomConsistencyCost(
+ 
+   // Project point in reference image to world.
+   float forward_point[3];
+-  ComputePointAtDepth(row, col, depth, forward_point);
++  ComputePointAtDepth(row, col, depth, forward_point, ref_inv_K);
+ 
+   // Project world point to source image.
+   const float inv_forward_z =
+@@ -833,13 +872,20 @@ class LikelihoodComputer {
+ 
+ // Generate random normals for each pixel in the normal map.
+ __global__ void InitNormalMap(GpuMatView<float> normal_map,
+-                              GpuMatView<curandState> rand_state_map) {
++                              GpuMatView<curandState> rand_state_map,
++                              const RefCalibration ref_calibration) {
++  // Copy the by-value calibration into local arrays so every helper receives a
++  // pointer into local memory, never a pointer into the parameter space.
++  const float ref_inv_K[4] = {ref_calibration.inv_K[0],
++                              ref_calibration.inv_K[1],
++                              ref_calibration.inv_K[2],
++                              ref_calibration.inv_K[3]};
+   const int row = blockDim.y * blockIdx.y + threadIdx.y;
+   const int col = blockDim.x * blockIdx.x + threadIdx.x;
+   if (col < normal_map.GetWidth() && row < normal_map.GetHeight()) {
+     curandState rand_state = rand_state_map.Get(row, col);
+     float normal[3];
+-    GenerateRandomNormal(row, col, &rand_state, normal);
++    GenerateRandomNormal(row, col, &rand_state, normal, ref_inv_K);
+     normal_map.SetSlice(row, col, normal);
+     rand_state_map.Set(row, col, rand_state);
+   }
+@@ -871,7 +917,12 @@ __global__ void ComputeInitialCost(
+     const cudaTextureObject_t src_images_texture,
+     const cudaTextureObject_t poses_texture,
+     const float sigma_spatial,
+-    const float sigma_color) {
++    const float sigma_color,
++    const RefCalibration ref_calibration) {
++  const float ref_inv_K[4] = {ref_calibration.inv_K[0],
++                              ref_calibration.inv_K[1],
++                              ref_calibration.inv_K[2],
++                              ref_calibration.inv_K[3]};
+   const int col = blockDim.x * blockIdx.x + threadIdx.x;
+ 
+   typedef PhotoConsistencyCostComputer<kWindowSize, kWindowStep>
+@@ -880,7 +931,8 @@ __global__ void ComputeInitialCost(
+                                                 src_images_texture,
+                                                 poses_texture,
+                                                 sigma_spatial,
+-                                                sigma_color);
++                                                sigma_color,
++                                                ref_inv_K);
+   pcc_computer.col = col;
+ 
+   __shared__ float local_ref_image_data
+@@ -950,7 +1002,16 @@ __global__ void SweepFromTopToBottom(
+     const cudaTextureObject_t src_images_texture,
+     const cudaTextureObject_t src_depth_maps_texture,
+     const cudaTextureObject_t poses_texture,
++    const RefCalibration ref_calibration,
+     const SweepOptions options) {
++  const float ref_K[4] = {ref_calibration.K[0],
++                          ref_calibration.K[1],
++                          ref_calibration.K[2],
++                          ref_calibration.K[3]};
++  const float ref_inv_K[4] = {ref_calibration.inv_K[0],
++                              ref_calibration.inv_K[1],
++                              ref_calibration.inv_K[2],
++                              ref_calibration.inv_K[3]};
+   const int col = blockDim.x * blockIdx.x + threadIdx.x;
+ 
+   // Probability for boundary pixels.
+@@ -998,7 +1059,8 @@ __global__ void SweepFromTopToBottom(
+                                                 src_images_texture,
+                                                 poses_texture,
+                                                 options.sigma_spatial,
+-                                                options.sigma_color);
++                                                options.sigma_color,
++                                                ref_inv_K);
+   pcc_computer.col = col;
+ 
+   __shared__ float local_ref_image_data
+@@ -1045,7 +1107,7 @@ __global__ void SweepFromTopToBottom(
+     // the depth of very oblique structures, i.e. pixels whose normal direction
+     // is significantly different from their viewing direction.
+     prev_param_state.depth = PropagateDepth(
+-        prev_param_state.depth, prev_param_state.normal, row - 1, row);
++        prev_param_state.depth, prev_param_state.normal, row - 1, row, ref_inv_K);
+ 
+     // Read parameters for current pixel from previous sweep.
+     curr_param_state.depth = depth_map.Get(row, col);
+@@ -1059,13 +1121,14 @@ __global__ void SweepFromTopToBottom(
+                   options.perturbation * M_PI,
+                   curr_param_state.normal,
+                   &rand_state,
+-                  rand_param_state.normal);
++                  rand_param_state.normal,
++                  ref_inv_K);
+ 
+     // Read in the backward message, compute selection probabilities and
+     // modulate selection probabilities with priors.
+ 
+     float point[3];
+-    ComputePointAtDepth(row, col, curr_param_state.depth, point);
++    ComputePointAtDepth(row, col, curr_param_state.depth, point, ref_inv_K);
+ 
+     for (int image_idx = 0; image_idx < cost_map.GetDepth(); ++image_idx) {
+       const float cost = cost_map.Get(row, col, image_idx);
+@@ -1096,7 +1159,8 @@ __global__ void SweepFromTopToBottom(
+                         col,
+                         curr_param_state.depth,
+                         curr_param_state.normal,
+-                        H);
++                        H,
++                        ref_inv_K);
+       const float res_prob =
+           likelihood_computer.ComputeResolutionProb<kWindowSize>(H, row, col);
+ 
+@@ -1151,7 +1215,9 @@ __global__ void SweepFromTopToBottom(
+                                        col,
+                                        depths[0],
+                                        pcc_computer.src_image_idx,
+-                                       options.geom_consistency_max_cost);
++                                       options.geom_consistency_max_cost,
++                                       ref_K,
++                                       ref_inv_K);
+       }
+ 
+       for (int i = 1; i < kNumCosts; ++i) {
+@@ -1167,7 +1233,9 @@ __global__ void SweepFromTopToBottom(
+                                          col,
+                                          depths[i],
+                                          pcc_computer.src_image_idx,
+-                                         options.geom_consistency_max_cost);
++                                         options.geom_consistency_max_cost,
++                                         ref_K,
++                                         ref_inv_K);
+         }
+       }
+     }
+@@ -1210,7 +1278,7 @@ __global__ void SweepFromTopToBottom(
+       int num_consistent = 0;
+ 
+       float best_point[3];
+-      ComputePointAtDepth(row, col, best_depth, best_point);
++      ComputePointAtDepth(row, col, best_depth, best_point, ref_inv_K);
+ 
+       const float min_ncc_prob =
+           likelihood_computer.ComputeNCCProb(1.0f - options.filter_min_ncc);
+@@ -1243,7 +1311,9 @@ __global__ void SweepFromTopToBottom(
+                                          col,
+                                          best_depth,
+                                          image_idx,
+-                                         options.geom_consistency_max_cost) <=
++                                         options.geom_consistency_max_cost,
++                                         ref_K,
++                                         ref_inv_K) <=
+               options.filter_geom_consistency_max_cost) {
+             consistency_mask.Set(row, col, image_idx, 1);
+             num_consistent += 1;
+@@ -1256,7 +1326,9 @@ __global__ void SweepFromTopToBottom(
+                                          col,
+                                          best_depth,
+                                          image_idx,
+-                                         options.geom_consistency_max_cost) <=
++                                         options.geom_consistency_max_cost,
++                                         ref_K,
++                                         ref_inv_K) <=
+                   options.filter_geom_consistency_max_cost) {
+             consistency_mask.Set(row, col, image_idx, 1);
+             num_consistent += 1;
+@@ -1295,12 +1367,29 @@ PatchMatchCuda::PatchMatchCuda(const PatchMatchOptions& options,
+       ref_height_(0),
+       rotation_in_half_pi_(0) {
+   SetBestCudaDevice(std::stoi(options_.gpu_index));
++  // One dedicated blocking stream per instance. Two workers on the same device
++  // each launch their four dense kernels on their own stream so the kernels can
++  // overlap. The stream is deliberately left blocking: the non-launch device
++  // operations (memcpys, rotations) still use the legacy default stream, whose
++  // documented implicit synchronization with every blocking stream preserves
++  // the original ordering. Do NOT switch to cudaStreamNonBlocking without also
++  // rewriting every CUDA_SYNC_AND_CHECK barrier in this file.
++  CUDA_SAFE_CALL(cudaStreamCreate(&stream_));
+   InitRefImage();
+   InitSourceImages();
+   InitTransforms();
+   InitWorkspaceMemory();
+ }
+ 
++PatchMatchCuda::~PatchMatchCuda() {
++  if (stream_ != nullptr) {
++    // Best effort: a destructor must not throw.
++    cudaStreamSynchronize(stream_);
++    cudaStreamDestroy(stream_);
++    stream_ = nullptr;
++  }
++}
++
+ void PatchMatchCuda::Run() {
+ #define CASE_WINDOW_RADIUS(window_radius, window_step)              \
+   case window_radius:                                               \
+@@ -1400,7 +1489,7 @@ void PatchMatchCuda::RunWithWindowSizeAndStep() {
+ 
+   ComputeCudaConfig();
+   ComputeInitialCost<kWindowSize, kWindowStep>
+-      <<<sweep_grid_size_, sweep_block_size_>>>(
++      <<<sweep_grid_size_, sweep_block_size_, 0, stream_>>>(
+           cost_map_->View(),
+           depth_map_->View(),
+           normal_map_->View(),
+@@ -1410,7 +1499,8 @@ void PatchMatchCuda::RunWithWindowSizeAndStep() {
+           src_images_texture_->GetObj(),
+           poses_texture_[0]->GetObj(),
+           options_.sigma_spatial,
+-          options_.sigma_color);
++          options_.sigma_color,
++          MakeRefCalibration(ref_K_host_[0], ref_inv_K_host_[0]));
+   CUDA_SYNC_AND_CHECK();
+ 
+   init_timer.Print("Initialization");
+@@ -1458,7 +1548,7 @@ void PatchMatchCuda::RunWithWindowSizeAndStep() {
+                        kGeomConsistencyTerm,              \
+                        kFilterPhotoConsistency,           \
+                        kFilterGeomConsistency>            \
+-      <<<sweep_grid_size_, sweep_block_size_>>>(          \
++      <<<sweep_grid_size_, sweep_block_size_, 0, stream_>>>(          \
+           global_workspace_->View(),                      \
+           rand_state_map_->View(),                        \
+           cost_map_->View(),                              \
+@@ -1475,6 +1565,8 @@ void PatchMatchCuda::RunWithWindowSizeAndStep() {
+               ? 0                                         \
+               : src_depth_maps_texture_->GetObj(),        \
+           poses_texture_[rotation_in_half_pi_]->GetObj(), \
++          MakeRefCalibration(ref_K_host_[rotation_in_half_pi_], \
++                             ref_inv_K_host_[rotation_in_half_pi_]), \
+           sweep_options);
+ 
+       if (last_sweep) {
+@@ -1738,14 +1830,8 @@ void PatchMatchCuda::InitTransforms() {
+     ref_inv_K_host_[i][3] = -ref_K_host_[i][3] / ref_K_host_[i][2];
+   }
+ 
+-  // Bind 0 degrees version to constant global memory.
+-  CUDA_SAFE_CALL(cudaMemcpyToSymbol(
+-      ref_K, ref_K_host_[0], sizeof(float) * 4, 0, cudaMemcpyHostToDevice));
+-  CUDA_SAFE_CALL(cudaMemcpyToSymbol(ref_inv_K,
+-                                    ref_inv_K_host_[0],
+-                                    sizeof(float) * 4,
+-                                    0,
+-                                    cudaMemcpyHostToDevice));
++  // Calibration is passed to each kernel launch as an immutable argument, so
++  // there is no shared __constant__ state to bind here.
+ 
+   //////////////////////////////////////////////////////////////////////////////
+   // Generate rotated versions of camera poses.
+@@ -1862,8 +1948,11 @@ void PatchMatchCuda::InitWorkspaceMemory() {
+     normal_map_->CopyToDevice(init_normal_map.GetPtr(),
+                               init_normal_map.GetWidth() * sizeof(float));
+   } else {
+-    InitNormalMap<<<elem_wise_grid_size_, elem_wise_block_size_>>>(
+-        normal_map_->View(), rand_state_map_->View());
++    InitNormalMap<<<elem_wise_grid_size_, elem_wise_block_size_, 0, stream_>>>(
++        normal_map_->View(),
++        rand_state_map_->View(),
++        MakeRefCalibration(ref_K_host_[rotation_in_half_pi_],
++                           ref_inv_K_host_[rotation_in_half_pi_]));
+   }
+ }
+ 
+@@ -1898,7 +1987,7 @@ void PatchMatchCuda::Rotate() {
+ 
+   // Rotate normal map.
+   {
+-    RotateNormalMap<<<elem_wise_grid_size_, elem_wise_block_size_>>>(
++    RotateNormalMap<<<elem_wise_grid_size_, elem_wise_block_size_, 0, stream_>>>(
+         normal_map_->View());
+     std::unique_ptr<GpuMat<float>> rotated_normal_map(
+         new GpuMat<float>(width, height, 3));
+@@ -1933,17 +2022,8 @@ void PatchMatchCuda::Rotate() {
+     cost_map_.swap(rotated_cost_map);
+   }
+ 
+-  // Rotate calibration.
+-  CUDA_SAFE_CALL(cudaMemcpyToSymbol(ref_K,
+-                                    ref_K_host_[rotation_in_half_pi_],
+-                                    sizeof(float) * 4,
+-                                    0,
+-                                    cudaMemcpyHostToDevice));
+-  CUDA_SAFE_CALL(cudaMemcpyToSymbol(ref_inv_K,
+-                                    ref_inv_K_host_[rotation_in_half_pi_],
+-                                    sizeof(float) * 4,
+-                                    0,
+-                                    cudaMemcpyHostToDevice));
++  // Calibration for the rotated reference image is selected at each launch via
++  // ref_K_host_[rotation_in_half_pi_]; there is no shared constant to update.
+ 
+   // Recompute Cuda configuration for rotated reference image.
+   ComputeCudaConfig();
+diff --git a/src/colmap/mvs/patch_match_cuda.h b/src/colmap/mvs/patch_match_cuda.h
+index 6e6a7da..6951619 100644
+--- a/src/colmap/mvs/patch_match_cuda.h
++++ b/src/colmap/mvs/patch_match_cuda.h
+@@ -50,6 +50,7 @@ class PatchMatchCuda {
+  public:
+   PatchMatchCuda(const PatchMatchOptions& options,
+                  const PatchMatch::Problem& problem);
++  ~PatchMatchCuda();
+ 
+   void Run();
+ 
+@@ -77,6 +78,11 @@ class PatchMatchCuda {
+   const PatchMatchOptions options_;
+   const PatchMatch::Problem problem_;
+ 
++  // Per-instance CUDA stream for the four dense kernel launches. Two
++  // patch-match workers on the same device each own a stream so their kernels
++  // can overlap. Created in the constructor, destroyed in the destructor.
++  cudaStream_t stream_ = nullptr;
++
+   // Dimensions for sweeping from top to bottom, i.e. one thread per column.
+   dim3 sweep_block_size_;
+   dim3 sweep_grid_size_;
+diff --git a/src/colmap/util/cuda_to_hip.h b/src/colmap/util/cuda_to_hip.h
+index 591e75e..ce635b2 100644
+--- a/src/colmap/util/cuda_to_hip.h
++++ b/src/colmap/util/cuda_to_hip.h
+@@ -50,6 +50,9 @@
+ // Errors, streams
+ using cudaError_t = hipError_t;
+ using cudaStream_t = hipStream_t;
++#define cudaStreamCreate hipStreamCreate
++#define cudaStreamCreateWithFlags hipStreamCreateWithFlags
++#define cudaStreamDestroy hipStreamDestroy
+ #define cudaSuccess hipSuccess
+ #define cudaGetErrorString hipGetErrorString
+ #define cudaGetLastError hipGetLastError

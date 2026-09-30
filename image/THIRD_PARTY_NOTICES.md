@@ -48,6 +48,23 @@ conditions, plus passing CPU, all-layer pattern-audit and vulnerability gates.
 No legal-compliance guarantee is made by this inventory, acknowledgement input
 or automated testing.
 
+## COLMAP / PyCOLMAP source build (benchmark-v4)
+
+The benchmark-v4 image does not install the published `pycolmap-cuda12` wheel.
+It builds PyCOLMAP from the pinned COLMAP 4.2.0 source tarball
+(https://codeload.github.com/colmap/colmap/tar.gz/refs/tags/4.2.0,
+sha256 b61731fb1a4a33609e64fb353fe589d483be6a73878a5965b7d32ae23fb22fc5,
+commit be5e29168d4aff238409d60424812df66aac919f) after applying
+`patch_match_cuda.2streams.patch`
+(sha256 c0ebc12088595049b070e00363df6ad23b0087c61a99c36660b1e7316d65dcce).
+COLMAP is BSD-3-Clause; the patched MVS CUDA sources remain under that licence
+and retain their copyright headers. Build-time dependencies (Boost, Eigen, Ceres,
+glog, gflags, FreeImage, Metis, OpenImageIO, SQLite, curl, OpenSSL, GLEW) retain
+their own Ubuntu package copyright/licence material in /usr/share/doc. COLMAP's
+own FetchContent also pins and statically links PoseLib (BSD-3-Clause) and FAISS
+(MIT); both are hash-pinned in the pinned COLMAP tarball's
+src/thirdparty/CMakeLists.txt and are redistributed here as part of PyCOLMAP.
+
 ## BabelStream (v5.0)
 
 Compiled unmodified from https://api.github.com/repos/UoB-HPC/BabelStream/tarball/v5.0

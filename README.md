@@ -27,6 +27,23 @@ The build context is only `image/`, with an explicit file allowlist. Never inclu
 credentials, datasets, private metadata or SSH keys in that context. Supply any
 required authentication externally at runtime.
 
+### benchmark-v4 source build (option C)
+
+The benchmark-v4 lineage needs two MVS CUDA changes the pinned wheel cannot
+express: removal of the shared module-scope `__constant__ ref_K/ref_inv_K`
+calibration and a per-instance `cudaStream_t` for the four dense kernel launches.
+The `pycolmap-builder` stage therefore fetches the pinned COLMAP 4.2.0 tarball
+(sha256 `b61731fb…`, commit `be5e2916…`), applies the hash-pinned
+`patch_match_cuda.2streams.patch`, builds COLMAP with CUDA for sm_70/75/86/89/120
+(the same list as BabelStream) and installs the resulting wheel in place of the
+pinned wheel. The patch file is part of the build context and is hash-checked by
+the build and by `tests/test_build_contract.py`.
+
+The build is CPU-validated in CI only: nvcc and cmake run without a GPU, so the
+image build proves the patched sources compile, not that the kernels produce
+correct depth/normal maps or that two workers overlap. That requires the separate
+GPU canary and a per-image comparison against a single-worker run.
+
 ## Environment
 
 - NVIDIA CUDA 12.9.1 runtime / Ubuntu 24.04, amd64 base pinned by digest.

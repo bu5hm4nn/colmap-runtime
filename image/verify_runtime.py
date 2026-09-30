@@ -43,6 +43,13 @@ def verify(mode, lock):
         if version != wheel['version']:
             raise RuntimeError(f"Version mismatch for {wheel['name']}")
         versions[wheel['name']] = version
+    # benchmark-v4 ships PyCOLMAP as a source build (patched MVS CUDA) rather
+    # than a wheel; its name/version are still pinned and fail-closed.
+    for build in lock.get('source_builds', []):
+        version = importlib.metadata.version(build['name'])
+        if version != build['version']:
+            raise RuntimeError(f"Version mismatch for {build['name']}")
+        versions[build['name']] = version
     # Do not truncate chained exceptions: pycolmap wraps the native loader error.
     for name in ('numpy', 'scipy', 'PIL.Image', 'matplotlib', 'pycolmap'):
         importlib.import_module(name)

@@ -6,15 +6,84 @@ RUN apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get -o APT::Get::Always-Include-Phased-Updates=true upgrade -y && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     ca-certificates curl openssh-server libsm6 libice6 libx11-6 libxext6 \
-    libgl1 libopengl0 libglib2.0-0t64 libgomp1 libstdc++6 && \
+    libgl1 libopengl0 libglib2.0-0t64 libgomp1 libstdc++6 \
+    libboost-program-options-dev libboost-graph-dev libboost-system-dev \
+    libeigen3-dev libceres-dev libgoogle-glog-dev libgflags-dev \
+    libfreeimage-dev libmetis-dev libopenimageio-dev libsqlite3-dev \
+    libcurl4-openssl-dev libssl-dev libglew-dev && \
     rm -rf /var/lib/apt/lists/* && mkdir -p /run/sshd /opt/colmap-runtime && \
     ssh-keygen -A
 ENV PATH="/opt/colmap-runtime/python/bin:${PATH}" \
     PYTHONNOUSERSITE=1 PYTHONDONTWRITEBYTECODE=1 PIP_DISABLE_PIP_VERSION_CHECK=1 \
     LD_LIBRARY_PATH="/opt/colmap-runtime/python/lib/python3.14/site-packages/nvidia/cuda_runtime/lib:/opt/colmap-runtime/python/lib/python3.14/site-packages/nvidia/curand/lib:/usr/local/nvidia/lib:/usr/local/nvidia/lib64:/usr/local/cuda/lib64"
 
+# ---------------------------------------------------------------------------
+# Source-built PyCOLMAP with per-worker CUDA streams (benchmark-v4 option C).
+#
+# The published `pycolmap-cuda12` wheel cannot express a per-instance CUDA
+# stream nor remove the shared module-scope `__constant__ ref_K/ref_inv_K`
+# calibration, so the MVS CUDA sources are patched and PyCOLMAP is rebuilt with
+# CUDA. The pinned COLMAP 4.2.0 tarball and the patch are both hash-checked
+# before use; the patch is the exact byte-for-byte file published with the
+# benchmark-v4 job package. Device targets mirror the BabelStream stage:
+# sm_70/75/86/89/120. COLMAP's own CMake workaround (issue #3514) drops sm_100+
+# SASS for the MVS target and emits sm_90 PTX instead, so sm_120 is still
+# requested here and JIT-compiled on Blackwell at first launch.
+#
+# This stage is CPU-validated only (nvcc + cmake run without a GPU); kernel
+# execution and reconstruction quality require the separate GPU canary.
+# ---------------------------------------------------------------------------
+FROM nvidia/cuda@sha256:020bc241a628776338f4d4053fed4c38f6f7f3d7eb5919fecb8de313bb8ba47c AS pycolmap-builder
+ARG COLMAP_VERSION=4.2.0
+ARG COLMAP_TARBALL_SHA256=b61731fb1a4a33609e64fb353fe589d483be6a73878a5965b7d32ae23fb22fc5
+ARG COLMAP_PATCH_SHA256=c0ebc12088595049b070e00363df6ad23b0087c61a99c36660b1e7316d65dcce
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates curl git cmake ninja-build build-essential \
+        libboost-program-options-dev libboost-graph-dev libboost-system-dev \
+        libeigen3-dev libceres-dev libgoogle-glog-dev libgflags-dev \
+        libfreeimage-dev libmetis-dev libopenimageio-dev libsqlite3-dev \
+        libcurl4-openssl-dev libssl-dev libglew-dev && \
+    rm -rf /var/lib/apt/lists/*
+# Pinned CPython 3.14.7 (the same archive the runtime builder installs), used
+# only to build the wheel; it is not copied into the final image.
+RUN curl --fail --location --retry 3 \
+    https://github.com/astral-sh/python-build-standalone/releases/download/20260924/cpython-3.14.7+20260924-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz \
+    -o /opt/python.tar.gz && \
+    echo 'bd0d0568ccded07bbf1c87727230dc5dd0187e706a87da23c4de78388a229b78  /opt/python.tar.gz' | sha256sum -c - && \
+    mkdir -p /opt/pybuild && tar -xzf /opt/python.tar.gz -C /opt/pybuild && rm /opt/python.tar.gz && \
+    /opt/pybuild/python/bin/python3.14 -m ensurepip && \
+    /opt/pybuild/python/bin/python3.14 -m pip install --no-cache-dir \
+        'scikit-build-core>=0.3.3' 'pybind11==3.1.0' numpy
+COPY patch_match_cuda.2streams.patch /build/patch_match_cuda.2streams.patch
+WORKDIR /build
+RUN echo "${COLMAP_TARBALL_SHA256}  colmap.tar.gz" > /tmp/sums && \
+    echo "${COLMAP_PATCH_SHA256}  patch_match_cuda.2streams.patch" >> /tmp/sums && \
+    curl --fail --location --retry 3 \
+        "https://codeload.github.com/colmap/colmap/tar.gz/refs/tags/${COLMAP_VERSION}" -o colmap.tar.gz && \
+    sha256sum -c /tmp/sums && \
+    mkdir source && tar -xzf colmap.tar.gz -C source --strip-components=1 && \
+    cd source && patch -p1 < /build/patch_match_cuda.2streams.patch && \
+    cmake -S . -B build -GNinja -DCMAKE_BUILD_TYPE=Release \
+        -DCUDA_ENABLED=ON -DCMAKE_CUDA_ARCHITECTURES="70;75;86;89;120" \
+        -DGUI_ENABLED=OFF -DCGAL_ENABLED=OFF -DLSD_ENABLED=OFF \
+        -DONNX_ENABLED=OFF -DCASPAR_ENABLED=OFF -DBUILD_SHARED_LIBS=OFF \
+        -DCMAKE_INSTALL_PREFIX=/opt/colmap && \
+    cmake --build build -j"$(nproc)" && cmake --install build
+# Build the pycolmap wheel against the patched, installed COLMAP. Stub
+# generation is disabled so no extra stub tooling is required.
+RUN mkdir -p /opt/wheels && \
+    /opt/pybuild/python/bin/python3.14 -m pip wheel /build/source \
+        --no-build-isolation --no-deps --wheel-dir /opt/wheels \
+        --config-settings=cmake.define.CMAKE_PREFIX_PATH=/opt/colmap \
+        --config-settings=cmake.define.GENERATE_STUBS=OFF && \
+    ls -l /opt/wheels
+
 FROM base AS builder
 COPY runtime-lock.json requirements.lock THIRD_PARTY_NOTICES.md /opt/colmap-runtime/
+# benchmark-v4: the source-built, patched PyCOLMAP wheel (produced by the
+# pycolmap-builder stage) replaces the pinned pycolmap wheel.
+COPY --from=pycolmap-builder /opt/wheels/ /opt/colmap-runtime/pycolmap-wheel/
 RUN curl --fail --location --retry 3 \
     https://github.com/astral-sh/python-build-standalone/releases/download/20260924/cpython-3.14.7+20260924-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz \
     -o /opt/colmap-runtime/python.tar.gz && \
@@ -23,10 +92,13 @@ RUN curl --fail --location --retry 3 \
 RUN (python3.14 -m pip --version || python3.14 -m ensurepip) && \
     python3.14 -m pip --isolated install --no-cache-dir --no-deps --require-hashes \
       --only-binary=:all: --index-url https://pypi.org/simple -r /opt/colmap-runtime/requirements.lock && \
+    python3.14 -m pip --isolated install --no-cache-dir --no-deps --no-index \
+      --find-links /opt/colmap-runtime/pycolmap-wheel pycolmap==4.2.0 && \
     python3.14 -m pip check && \
     rm -rf /opt/colmap-runtime/python/lib/python3.14/site-packages/pip \
            /opt/colmap-runtime/python/lib/python3.14/site-packages/pip-*.dist-info \
-           /opt/colmap-runtime/python/lib/python3.14/ensurepip && \
+           /opt/colmap-runtime/python/lib/python3.14/ensurepip \
+           /opt/colmap-runtime/pycolmap-wheel && \
     rm -f /opt/colmap-runtime/python/bin/pip*
 COPY verify_runtime.py /opt/colmap-runtime/verify_runtime.py
 
