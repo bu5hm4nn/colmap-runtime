@@ -38,11 +38,16 @@ ARG COLMAP_VERSION=4.2.0
 ARG COLMAP_TARBALL_SHA256=b61731fb1a4a33609e64fb353fe589d483be6a73878a5965b7d32ae23fb22fc5
 ARG COLMAP_PATCH_SHA256=c0ebc12088595049b070e00363df6ad23b0087c61a99c36660b1e7316d65dcce
 ENV DEBIAN_FRONTEND=noninteractive
+# openimageio-tools supplies /usr/bin/iconvert etc.: Ubuntu's
+# OpenImageIOConfig.cmake exports imported executable targets and CMake refuses
+# to configure if their files are absent. libopenimageio-dev alone does not
+# install them, so COLMAP's find_package(OpenImageIO) fails without this.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates curl git cmake ninja-build build-essential \
         libboost-program-options-dev libboost-graph-dev libboost-system-dev \
         libeigen3-dev libceres-dev libgoogle-glog-dev libgflags-dev \
-        libfreeimage-dev libmetis-dev libopenimageio-dev libsqlite3-dev \
+        libfreeimage-dev libmetis-dev libopenimageio-dev openimageio-tools \
+        libsqlite3-dev \
         libcurl4-openssl-dev libssl-dev libglew-dev && \
     rm -rf /var/lib/apt/lists/*
 # Pinned CPython 3.14.7 (the same archive the runtime builder installs), used

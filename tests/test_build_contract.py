@@ -193,6 +193,10 @@ class BuildContractTests(unittest.TestCase):
         self.assertIn('-DCUDA_ENABLED=ON', dockerfile)
         self.assertIn('-DCMAKE_CUDA_ARCHITECTURES="70;75;86;89;120"', dockerfile)
         self.assertIn('-DBUILD_SHARED_LIBS=OFF', dockerfile)
+        # Ubuntu's OpenImageIO CMake config validates imported executable targets
+        # (/usr/bin/iconvert, ...); libopenimageio-dev does not ship them, so the
+        # builder must install openimageio-tools or COLMAP's configure fails.
+        self.assertIn('openimageio-tools', dockerfile)
         # The source-built wheel replaces the pinned wheel in the runtime stage.
         self.assertIn('pycolmap==4.2.0', dockerfile)
         self.assertIn('COPY --from=pycolmap-builder /opt/wheels/', dockerfile)
