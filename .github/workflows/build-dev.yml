@@ -77,14 +77,15 @@ jobs:
           docker run --rm --entrypoint cat colmap-dev:pr3 /usr/local/cuda/version.json \
             > reports/cuda-version.json 2>&1 || true
           docker run --rm --entrypoint nvcc colmap-dev:pr3 --version > reports/nvcc.txt 2>&1 || true
-          cat > reports/cuda-compat.txt <<'EOF'
-CUDA toolkit: 12.8.1 (base nvidia/cuda:12.8.1-devel-ubuntu22.04@sha256:a99a1860ba8e2916e5c3e73b72ec4c4301653a84586e05bfc9a2aa2d58027e97)
-CUDA 12.8 Linux minimum driver: 570.26
-Minor-version-compatibility floor: 525.60.13 (PTX JIT caveats apply)
-Spheron target driver: 570.195.03 (>= 570.26 => natively compatible with CUDA 12.8)
-LIMITATION: no GPU in CI; this is static (toolkit/target) compatibility only.
-Runtime kernel/GPU validation on 3090/5090 is NOT performed here.
-EOF
+          {
+            printf '%s\n' \
+              'CUDA toolkit: 12.8.1 (base nvidia/cuda:12.8.1-devel-ubuntu22.04@sha256:a99a1860ba8e2916e5c3e73b72ec4c4301653a84586e05bfc9a2aa2d58027e97)' \
+              'CUDA 12.8 Linux minimum driver: 570.26' \
+              'Minor-version-compatibility floor: 525.60.13 (PTX JIT caveats apply)' \
+              'Spheron target driver: 570.195.03 (>= 570.26 => natively compatible with CUDA 12.8)' \
+              'LIMITATION: no GPU in CI; static (toolkit/target) compatibility only.' \
+              'Runtime kernel/GPU validation on 3090/5090 is NOT performed here.'
+          } > reports/cuda-compat.txt
           cat reports/cuda-compat.txt
       - name: Capture build/architecture and committed-repo evidence
         shell: bash
