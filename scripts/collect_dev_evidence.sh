@@ -8,6 +8,11 @@ mkdir -p "$OUT"
 test -f "$BUILD/CMakeCache.txt"
 test -x /opt/colmap-pr3/bin/colmap
 cp /opt/colmap-dev/BUILD-MANIFEST.txt "$OUT/BUILD-MANIFEST.txt"
+cp /opt/colmap-dev/EXPERIMENTAL-USE.txt "$OUT/EXPERIMENTAL-USE.txt"
+cp -r /opt/colmap-dev/security-remediation "$OUT/security-remediation"
+dpkg-query -L linux-libc-dev > "$OUT/header-package-files.txt"
+test "$(dpkg-query -W -f='${Version}' linux-libc-dev)" = '6.8.0-55.57'
+test ! -e /opt/nvidia/nsight-compute/2025.1.1/host/target-linux-x64/plugins/efa_metrics/nic_sampler
 cp "$BUILD/CMakeCache.txt" "$OUT/CMakeCache.txt"
 # Preserve original manifest verbatim; directory-scoped CUDA flags are not
 # reliably represented by its fast_math field. Ninja commands are recipes,

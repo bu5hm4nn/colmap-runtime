@@ -1,5 +1,10 @@
 # Dev post-build path/gate repair
 
+Historical repair record for workflow f971b94. The subsequent owner-approved
+header-only exception and GnuPG/Nsight remediation are documented in
+[experimental-dev-security-exception.md](experimental-dev-security-exception.md).
+The production zero-HIGH/CRITICAL policy is unchanged.
+
 Failure evidence retained from run 36922317229 (recipe/workflow 42bd483):
 `cd: /src/colmap-pr3/build: No such file or directory`. Full image build/install
 succeeded; no CPU tests, architecture gate or publication succeeded in that run.

@@ -143,3 +143,47 @@ RUN chmod +x /opt/colmap-dev/*.sh \
     && chmod -R a+rX /opt/colmap-pr3 /opt/colmap-dev /opt/deps /opt/src /opt/archives \
     && chmod -R 0777 /work
 ENTRYPOINT ["/opt/colmap-dev/entrypoint.sh"]
+
+# Final container-only security remediation. Preserve cached compilation and
+# compiler headers identically for candidate and on-demand controls.
+# Owner approved linux-libc-dev header findings for this disposable experiment;
+# that exception does NOT cover GnuPG or the bundled Nsight Go executable.
+FROM dev-pr3 AS dev-experimental
+ARG GNUPG_VERSION=2.4.4-2ubuntu17.6
+RUN set -eux; \
+    mkdir -p /opt/colmap-dev/security-remediation; \
+    sha256sum /opt/colmap-pr3/bin/colmap /usr/local/cuda/bin/nvcc \
+        /usr/local/cuda/bin/cuobjdump /usr/local/cuda/bin/compute-sanitizer \
+        > /opt/colmap-dev/security-remediation/retained-binaries.sha256; \
+    dpkg-query -W -f='${Package} ${Version}\n' linux-libc-dev libc6 libc6-dev libstdc++6 libgcc-s1 \
+        cuda-nvcc-12-8 cuda-cuobjdump-12-8 cuda-sanitizer-12-8 \
+        > /opt/colmap-dev/security-remediation/retained-packages.before; \
+    apt-get update; \
+    apt-get -s purge cuda-nsight-compute-12-8 nsight-compute-2025.1.1 \
+        > /opt/colmap-dev/security-remediation/nsight-removal-plan.txt; \
+    awk '/^Remv / { if ($2 != "cuda-nsight-compute-12-8" && $2 != "nsight-compute-2025.1.1") exit 1; n++ } END { if (n != 2) exit 1 }' \
+        /opt/colmap-dev/security-remediation/nsight-removal-plan.txt; \
+    apt-get -y -o APT::Get::AutomaticRemove=false purge cuda-nsight-compute-12-8 nsight-compute-2025.1.1; \
+    apt-get install -y --no-remove --only-upgrade --no-install-recommends \
+        "dirmngr=${GNUPG_VERSION}" "gnupg=${GNUPG_VERSION}" "gnupg-utils=${GNUPG_VERSION}" \
+        "gnupg2=${GNUPG_VERSION}" "gpg=${GNUPG_VERSION}" "gpg-agent=${GNUPG_VERSION}" \
+        "gpgconf=${GNUPG_VERSION}" "gpgsm=${GNUPG_VERSION}" "gpgv=${GNUPG_VERSION}" "keyboxd=${GNUPG_VERSION}"; \
+    rm -rf /var/lib/apt/lists/*; \
+    test ! -e /opt/nvidia/nsight-compute/2025.1.1/host/target-linux-x64/plugins/efa_metrics/nic_sampler; \
+    test ! -e /usr/local/cuda/bin/ncu; \
+    sha256sum -c /opt/colmap-dev/security-remediation/retained-binaries.sha256; \
+    dpkg-query -W -f='${Package} ${Version}\n' linux-libc-dev libc6 libc6-dev libstdc++6 libgcc-s1 \
+        cuda-nvcc-12-8 cuda-cuobjdump-12-8 cuda-sanitizer-12-8 \
+        > /opt/colmap-dev/security-remediation/retained-packages.after; \
+    cmp /opt/colmap-dev/security-remediation/retained-packages.before /opt/colmap-dev/security-remediation/retained-packages.after; \
+    dpkg-query -W -f='${Package} ${Version}\n' dirmngr gnupg gnupg-utils gnupg2 gpg gpg-agent gpgconf gpgsm gpgv keyboxd \
+        > /opt/colmap-dev/security-remediation/gnupg-packages.txt; \
+    /usr/local/cuda/bin/nvcc --version; \
+    /usr/local/cuda/bin/cuobjdump --version; \
+    /usr/local/cuda/bin/compute-sanitizer --version; \
+    printf '%s\n' 'EXPERIMENTAL DEV ONLY; NO PRODUCTION DATA.' \
+        'Owner-approved linux-libc-dev header exception on 2026-10-01; expires 2026-10-15.' \
+        'Delete this image after confirming benchmarks; no production promotion.' \
+        'GnuPG updated; Nsight Compute omitted (may be installed separately for profiling).' \
+        > /opt/colmap-dev/EXPERIMENTAL-USE.txt
+LABEL org.opencontainers.image.description="TEMPORARY experimental COLMAP PR3 dev image; no production data; accepted header findings; delete after confirming benchmarks"
