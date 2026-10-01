@@ -59,7 +59,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 # functionality, so an empty /usr/include/opencv4 must exist (the same fix as
 # COLMAP's own docs/CI).
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        ca-certificates curl git cmake ninja-build build-essential \
+        ca-certificates curl git cmake ninja-build build-essential unzip \
         libboost-program-options-dev libboost-graph-dev libboost-system-dev \
         libeigen3-dev libceres-dev libgoogle-glog-dev libgflags-dev \
         libfreeimage-dev libmetis-dev libopenimageio-dev openimageio-tools \
@@ -77,6 +77,25 @@ RUN curl --fail --location --retry 3 \
     /opt/pybuild/python/bin/python3.14 -m ensurepip && \
     /opt/pybuild/python/bin/python3.14 -m pip install --no-cache-dir \
         'scikit-build-core>=0.3.3' 'pybind11==3.1.0' numpy
+# PoseLib is a pinned FetchContent dependency whose compile dominates the
+# critical path (~8-10 min). Build and install the exact pinned revision in its
+# own layer *before* the kernel patch is copied, so changing the patch no longer
+# rebuilds PoseLib. It is installed to the default /usr/local prefix so the
+# installed COLMAP config re-finds it via find_package (FETCH_POSELIB=OFF).
+# MARCH_NATIVE=OFF matches what COLMAP sets before FetchContent_MakeAvailable.
+ARG POSELIB_SHA256=ee46322581c7901fe24e91434eeec27163f820d481cba5faa43d37651fabc8e8
+RUN curl --fail --location --retry 3 \
+        https://github.com/PoseLib/PoseLib/archive/1bb8881f08e68f0b3d9b2ecc411fc15e7766ef1b.zip \
+        -o /tmp/poselib.zip && \
+    echo "${POSELIB_SHA256}  /tmp/poselib.zip" | sha256sum -c - && \
+    unzip -q /tmp/poselib.zip -d /tmp && \
+    cmake -S /tmp/PoseLib-1bb8881f08e68f0b3d9b2ecc411fc15e7766ef1b \
+        -B /tmp/poselib-build -GNinja -DCMAKE_BUILD_TYPE=Release \
+        -DMARCH_NATIVE=OFF && \
+    cmake --build /tmp/poselib-build -j"$(nproc)" && \
+    cmake --install /tmp/poselib-build && \
+    rm -rf /tmp/PoseLib-1bb8881f08e68f0b3d9b2ecc411fc15e7766ef1b \
+           /tmp/poselib-build /tmp/poselib.zip
 COPY patch_match_cuda.2streams.patch /build/patch_match_cuda.2streams.patch
 WORKDIR /build
 RUN echo "${COLMAP_TARBALL_SHA256}  colmap.tar.gz" > /tmp/sums && \
@@ -88,6 +107,7 @@ RUN echo "${COLMAP_TARBALL_SHA256}  colmap.tar.gz" > /tmp/sums && \
     cd source && patch -p1 < /build/patch_match_cuda.2streams.patch && \
     cmake -S . -B build -GNinja -DCMAKE_BUILD_TYPE=Release \
         -DCUDA_ENABLED=ON -DCMAKE_CUDA_ARCHITECTURES="70;75;86;89;120" \
+        -DFETCH_POSELIB=OFF -DPoseLib_DIR=/usr/local/lib/cmake/PoseLib \
         -DGUI_ENABLED=OFF -DCGAL_ENABLED=OFF -DLSD_ENABLED=OFF \
         -DONNX_ENABLED=OFF -DCASPAR_ENABLED=OFF -DBUILD_SHARED_LIBS=OFF \
         -DCMAKE_INSTALL_PREFIX=/opt/colmap && \
