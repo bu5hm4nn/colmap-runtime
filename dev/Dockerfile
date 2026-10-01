@@ -161,7 +161,8 @@ RUN set -eux; \
     apt-get update; \
     apt-get -s purge cuda-nsight-compute-12-8 nsight-compute-2025.1.1 \
         > /opt/colmap-dev/security-remediation/nsight-removal-plan.txt; \
-    awk '/^Remv / { if ($2 != "cuda-nsight-compute-12-8" && $2 != "nsight-compute-2025.1.1") exit 1; n++ } END { if (n != 2) exit 1 }' \
+    cat /opt/colmap-dev/security-remediation/nsight-removal-plan.txt; \
+    awk '/^(Remv|Purg) / { if ($2 != "cuda-nsight-compute-12-8" && $2 != "nsight-compute-2025.1.1") exit 1; n++ } END { if (n != 2) exit 1 }' \
         /opt/colmap-dev/security-remediation/nsight-removal-plan.txt; \
     apt-get -y -o APT::Get::AutomaticRemove=false purge cuda-nsight-compute-12-8 nsight-compute-2025.1.1; \
     apt-get install -y --no-remove --only-upgrade --no-install-recommends \

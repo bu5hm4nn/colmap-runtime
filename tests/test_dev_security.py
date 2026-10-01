@@ -1,4 +1,7 @@
 from datetime import date
+from pathlib import Path
+import re
+import subprocess
 import unittest
 
 from scripts.check_dev_security import evaluate
@@ -49,6 +52,17 @@ class DevSecurityTests(unittest.TestCase):
         self.assertTrue(result['gate_passed'])
         self.assertTrue(result['zero_high_critical'])
         self.assertEqual(result['accepted_header_findings'], [])
+
+    def test_nsight_removal_guard_accepts_purge_and_rejects_extra_removals(self):
+        dockerfile = (Path(__file__).resolve().parents[1] / 'dev/Dockerfile').read_text()
+        guard = re.search(r"awk '([^']+)'", dockerfile).group(1)
+        allowed = 'Purg cuda-nsight-compute-12-8 [12.8.1-1]\nPurg nsight-compute-2025.1.1 [2025.1.1.2-1]\n'
+        for plan, expected in ((allowed, 0), ('', 1),
+                               (allowed + 'Remv cuda-nvcc-12-8 [12.8.93-1]\n', 1),
+                               (allowed + 'Purg linux-libc-dev [6.8.0-55.57]\n', 1)):
+            with self.subTest(plan=plan):
+                result = subprocess.run(['awk', guard], input=plan, text=True, capture_output=True)
+                self.assertEqual(result.returncode, expected)
 
     def test_wrong_os_cannot_receive_exception(self):
         report = self.report()
