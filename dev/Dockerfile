@@ -11,7 +11,7 @@
 # - ONNX is OFF explicitly (documented omission for benchmark scope).
 # - Arch list is an ARG; the built MVS code coverage is verified statically by
 #   verify-targets.sh (no GPU launch).
-FROM nvidia/cuda:12.8.1-devel-ubuntu24.04@sha256:520292dbb4f755fd360766059e62956e9379485d9e073bbd2f6e3c20c270ed66
+FROM nvidia/cuda:12.8.1-devel-ubuntu24.04@sha256:4b9ed5fa8361736996499f64ecebf25d4ec37ff56e4d11323ccde10aa36e0c43
 
 ARG COLMAP_COMMIT=2a5c9c81b2e77f10aad25582679c8d344c3f6694
 ARG COLMAP_TARBALL_SHA256=b9132fdd6ebb1c92969ce60c37acc29000de22e2b8c6017e5605e7b574697a69
@@ -28,7 +28,7 @@ LABEL org.opencontainers.image.description="TEMPORARY dev image: COLMAP PR#3 (ru
 # openimageio-tools + empty /usr/include/opencv4 are required for COLMAP's
 # find_package(OpenImageIO) to configure (see the production Dockerfile).
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        ca-certificates curl git cmake ninja-build build-essential \
+        ca-certificates curl git cmake ninja-build build-essential ccache \
         libboost-program-options-dev libboost-graph-dev libboost-system-dev \
         libeigen3-dev libceres-dev libgoogle-glog-dev libgflags-dev \
         libfreeimage-dev libmetis-dev libopenimageio-dev openimageio-tools \
@@ -80,7 +80,14 @@ RUN { echo "image=colmap-dev"; echo "source_repo=https://github.com/uncloud-tech
       echo "cuda_architectures=${CUDA_ARCHITECTURES}"; \
       echo "onnx=OFF"; echo "tests=ON"; \
       echo "gtest_commit=${GTEST_COMMIT}"; echo "gtest_sha256=${GTEST_SHA256}"; \
+      echo "ccache=$(ccache --version | head -1)"; \
+      echo "compute_sanitizer=$(ls -1 /usr/local/cuda/bin/compute-sanitizer 2>/dev/null || echo MISSING)"; \
       echo "nvcc=$(nvcc --version | tail -1)"; } > /opt/colmap-dev/BUILD-MANIFEST.txt
 
-COPY build-variant.sh verify-targets.sh /opt/colmap-dev/
-RUN chmod +x /opt/colmap-dev/build-variant.sh /opt/colmap-dev/verify-targets.sh
+# Stable entrypoint + unprivileged operation: the harness runs as UID 1002 and
+# needs the tree readable/executable and /work writable; no root, no docker socket.
+COPY build-variant.sh verify-targets.sh entrypoint.sh /opt/colmap-dev/
+RUN chmod +x /opt/colmap-dev/*.sh \
+    && chmod -R a+rX /opt/colmap-pr3 /opt/colmap-dev /src \
+    && mkdir -p /work && chmod 0777 /work
+ENTRYPOINT ["/opt/colmap-dev/entrypoint.sh"]

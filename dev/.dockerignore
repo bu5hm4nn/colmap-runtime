@@ -2,3 +2,4 @@
 !Dockerfile
 !build-variant.sh
 !verify-targets.sh
+!entrypoint.sh
