@@ -3,3 +3,5 @@
 !build-variant.sh
 !verify-targets.sh
 !entrypoint.sh
+!patches
+!patches/parent-static8.patch

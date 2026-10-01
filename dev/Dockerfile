@@ -124,6 +124,7 @@ RUN { echo "--- executed build flags ---"; \
 
 # Stable entrypoint + unprivileged operation (harness runs as UID 1002).
 COPY build-variant.sh verify-targets.sh entrypoint.sh /opt/colmap-dev/
+COPY patches/ /opt/colmap-dev/patches/
 RUN chmod +x /opt/colmap-dev/*.sh \
     && chmod -R a+rX /opt/colmap-pr3 /opt/colmap-dev /opt/deps /opt/src \
     && mkdir -p /work && chmod 0777 /work
