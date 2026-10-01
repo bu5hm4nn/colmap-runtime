@@ -52,18 +52,21 @@ jobs:
             --cache-to "type=registry,ref=$cache_ref,mode=max" \
             --tag colmap-dev:pr3 dev 2>&1 | tee reports/build.log
           ( grep -c 'CACHED' reports/build.log || true ) > reports/cache-hits.txt
-      - name: List and run available CPU tests (no device tests on the CPU runner)
+      - name: List and run the host-side sweep-tile test (no device tests)
         shell: bash
         run: |
           set -euo pipefail
-          # List every configured test, then run ONLY the host-side sweep-tile
-          # test; device-required MVS tests are deliberately not executed here.
+          # List matching tests, then assert the expected one is configured, then
+          # run it with --no-tests=error so a zero-match run cannot "pass".
+          # This runs ONLY the host-side sweep-tile test, not the full suite;
+          # device-required MVS tests are not executed on the CPU runner.
           docker run --rm --entrypoint bash colmap-dev:pr3 -lc \
-            'cd /src/colmap-pr3/build && ctest -N' 2>&1 | tee reports/ctest-list.log
+            'cd /src/colmap-pr3/build && ctest -N -R sweep_tile' 2>&1 | tee reports/ctest-list.log
+          grep -q 'sweep_tile' reports/ctest-list.log \
+            || { echo "FAIL: expected sweep_tile test is not configured" | tee reports/cpu-tests.log; exit 1; }
           docker run --rm --entrypoint bash colmap-dev:pr3 -lc \
-            'cd /src/colmap-pr3/build && ctest --output-on-failure -R sweep_tile' \
-            2>&1 | tee reports/cpu-tests.log \
-            || { echo "ctest non-zero (recorded; may require a GPU)" | tee -a reports/cpu-tests.log; }
+            'cd /src/colmap-pr3/build && ctest --no-tests=error --output-on-failure -R sweep_tile' \
+            2>&1 | tee reports/cpu-tests.log
       - name: Verify emitted CUDA targets (static gate, no GPU)
         shell: bash
         run: |
