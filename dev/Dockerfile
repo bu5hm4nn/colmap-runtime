@@ -58,7 +58,9 @@ RUN set -eux; \
     echo "${BOOST_SHA256}  /tmp/boost.tar.xz" | sha256sum -c -; \
     mkdir -p /tmp/boost-src; tar -xf /tmp/boost.tar.xz -C /tmp/boost-src --strip-components=1; \
     cmake -S /tmp/boost-src -B /tmp/boost-build -GNinja -DCMAKE_BUILD_TYPE=Release \
-          -DCMAKE_INSTALL_PREFIX=/opt/deps -DBOOST_INCLUDE_LIBRARIES="graph;program_options;system"; \
+          -DCMAKE_INSTALL_PREFIX=/opt/deps \
+          -DBOOST_INCLUDE_LIBRARIES="graph;program_options;system;algorithm;container_hash;heap;preprocessor;property_map;property_tree;unordered;utility" \
+          -DBOOST_ENABLE_MPI=OFF -DBOOST_ENABLE_PYTHON=OFF -DBOOST_INSTALL_LAYOUT=system; \
     cmake --build /tmp/boost-build -j"$(nproc)"; cmake --install /tmp/boost-build; rm -rf /tmp/boost-*; \
     \
     curl -fsSL "https://github.com/PoseLib/PoseLib/archive/${POSELIB_COMMIT}.zip" -o /tmp/poselib.zip; \
