@@ -38,6 +38,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /usr/include/opencv4 /opt/deps /opt/src /opt/colmap-dev
 
+# Exported runtime libraries of the shared deps + COLMAP install, so the built
+# binaries/tests resolve them offline (no network, no host installs).
+ENV LD_LIBRARY_PATH=/opt/deps/lib:/opt/colmap-pr3/lib
+
 # ---- ACQUIRE + INSTALL pinned deps into the shared prefix /opt/deps (network) ----
 RUN set -eux; \
     curl -fsSL "https://github.com/google/googletest/archive/${GTEST_COMMIT}.tar.gz" -o /tmp/gtest.tar.gz; \
@@ -106,6 +110,17 @@ RUN --network=none cmake -S /opt/src/colmap-pr3 -B /opt/src/colmap-pr3/build -GN
         -DCMAKE_INSTALL_PREFIX=/opt/colmap-pr3 && \
     cmake --build /opt/src/colmap-pr3/build -j"$(nproc)" && \
     cmake --install /opt/src/colmap-pr3/build
+
+# Append the EXACT executed Release/CUDA flags (shared across all arms) and the
+# runtime-library resolution to the manifest, so the flags are auditable.
+RUN { echo "--- executed build flags ---"; \
+      echo "cmake_build_type=Release"; \
+      echo "cuda_architectures=${CUDA_ARCHITECTURES}"; \
+      grep -m1 '^CMAKE_CXX_FLAGS:' /opt/src/colmap-pr3/build/CMakeCache.txt || true; \
+      grep -m1 '^CMAKE_CUDA_FLAGS:' /opt/src/colmap-pr3/build/CMakeCache.txt || true; \
+      echo "ld_library_path=${LD_LIBRARY_PATH}"; \
+      echo "fast_math=$([ -n \"$(grep -m1 'use_fast_math' /opt/src/colmap-pr3/build/CMakeCache.txt || true)\" ] && echo on || echo off)"; \
+    } >> /opt/colmap-dev/BUILD-MANIFEST.txt
 
 # Stable entrypoint + unprivileged operation (harness runs as UID 1002).
 COPY build-variant.sh verify-targets.sh entrypoint.sh /opt/colmap-dev/
