@@ -245,7 +245,7 @@ class BuildContractTests(unittest.TestCase):
         self.assertIn('if: inputs.publish', workflow)
         # BuildKit path: pinned setup action, registry cache, single-manifest
         # load, and a build that never pushes (publication stays gated).
-        self.assertIn('docker/setup-buildx-action@', workflow)
+        self.assertIn('useblacksmith/setup-docker-builder@', workflow)
         self.assertIn('docker buildx build', workflow)
         self.assertIn('--pull', workflow)
         self.assertIn('--provenance=false --sbom=false', workflow)
@@ -257,6 +257,28 @@ class BuildContractTests(unittest.TestCase):
         self.assertIn(' image', workflow)
         self.assertNotIn('--push', workflow)
         self.assertNotIn('pull_request_target', workflow)
+
+    def test_blacksmith_migration_keeps_pins_and_separate_caches(self):
+        for filename, cpus, cache in [('build.yml', 4, 'runtime'),
+                                      ('build-dev.yml', 32, 'dev')]:
+            with self.subTest(workflow=filename):
+                workflow = (ROOT / '.github/workflows' / filename).read_text()
+                self.assertIn(f'runs-on: blacksmith-{cpus}vcpu-ubuntu-2404', workflow)
+                self.assertRegex(workflow, r'uses: actions/checkout@[0-9a-f]{40}\b')
+                self.assertRegex(workflow, r'uses: useblacksmith/setup-docker-builder@[0-9a-f]{40}\b')
+                self.assertNotIn('useblacksmith/checkout@', workflow)
+                self.assertIn('persist-credentials: false', workflow)
+                self.assertIn('cache-key: ${{ github.repository }}/' + cache, workflow)
+                self.assertIn('nofallback: true', workflow)
+                self.assertIn('buildx-version: v0.37.2', workflow)
+                self.assertIn('docker buildx build', workflow)
+                self.assertIn('--load', workflow)
+                self.assertIn('type=registry,ref=$cache_ref', workflow)
+                self.assertIn('mode=max', workflow)
+                self.assertNotIn('--push', workflow)
+                self.assertIn('cancel-in-progress: false', workflow)
+                self.assertNotIn('pull_request:', workflow)
+                self.assertNotIn('pull_request_target:', workflow)
 
 
 if __name__ == '__main__':

@@ -30,7 +30,7 @@ jobs:
     # the previous wheel-install image.
     timeout-minutes: 120
     steps:
-      - uses: useblacksmith/checkout@v1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Publication terms gate
@@ -46,8 +46,15 @@ jobs:
         env:
           PYTHONDONTWRITEBYTECODE: '1'
         run: python3 -m unittest discover -s tests -v
-      - name: Setup Blacksmith Builder
-        uses: useblacksmith/setup-docker-builder@v1
+      - name: Set up Blacksmith BuildKit builder
+        uses: useblacksmith/setup-docker-builder@19215110ab936351210feebdfa5b440b4493e184 # v2.2.0
+        with:
+          # Isolate sticky cache from the temporary dev toolchain image.
+          cache-key: ${{ github.repository }}/runtime
+          buildx-version: v0.37.2
+          platforms: linux/amd64
+          # Fail visibly instead of silently benchmarking a fallback builder.
+          nofallback: true
       - name: Log in to GHCR for build-cache access
         shell: bash
         env:
