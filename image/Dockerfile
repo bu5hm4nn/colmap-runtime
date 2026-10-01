@@ -2,7 +2,16 @@ FROM nvidia/cuda@sha256:1199283a7fd5fc7dcb472ea4c6b6d8eb378ef8c0b9aae5e731491c01
 LABEL org.opencontainers.image.source="https://github.com/uncloud-tech/colmap-runtime"
 LABEL org.opencontainers.image.description="Pinned CUDA-enabled PyCOLMAP runtime; GPU validation requires a separate test"
 
-RUN apt-get update && \
+# Weekly base-package freshness bound. BuildKit layer/registry caching would
+# otherwise reuse this apt layer indefinitely. A value that changes each ISO
+# week forces the base stage to re-resolve Ubuntu security updates while the
+# independent pycolmap-builder/babelstream stages (and the COLMAP source
+# compile) stay cached. Only the base stage's packages ship in the runtime
+# image, so the build-only stages are deliberately not busted.
+ARG APT_REFRESH=unset
+
+RUN echo "APT_REFRESH=${APT_REFRESH}" && \
+    apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get -o APT::Get::Always-Include-Phased-Updates=true upgrade -y && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     ca-certificates curl openssh-server libsm6 libice6 libx11-6 libxext6 \

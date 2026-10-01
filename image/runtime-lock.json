@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "rebuild_bit_identical": false,
-  "apt_policy": "Ubuntu security updates resolved at build time; exact resulting packages recorded in system-packages.txt. Run published images by digest.",
+  "apt_policy": "Ubuntu security updates resolved at build time; the base stage re-resolves them at least weekly via the APT_REFRESH build argument, while the build-only pycolmap-builder/babelstream stages stay cached. Exact resulting packages recorded in system-packages.txt. Run published images by digest.",
   "cuda_provider_policy": "Pinned pip cudart and curand, asserted against actual process maps; NVIDIA base provides other runtime libraries.",
   "gpu_validation": "Pending synthetic GPU canary; imports and GPU inventory do not establish kernel compatibility.",
   "platform": "linux/amd64",

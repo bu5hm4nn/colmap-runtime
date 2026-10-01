@@ -46,14 +46,49 @@ jobs:
         env:
           PYTHONDONTWRITEBYTECODE: '1'
         run: python3 -m unittest discover -s tests -v
+      - name: Set up BuildKit builder
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Log in to GHCR for build-cache access
+        shell: bash
+        env:
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$REGISTRY_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          unset REGISTRY_TOKEN
       - name: Build CPU-validated candidate
         shell: bash
+        env:
+          PUBLISH: ${{ inputs.publish }}
         run: |
           set -euo pipefail
           mkdir -p reports
           printf '%s' 'BUILD_CONTEXT_EXCLUSION_CANARY' > image/.env.canary
-          docker build --pull --platform linux/amd64 --progress=plain \
-            --tag colmap-runtime:candidate image 2>&1 | tee reports/build.log
+          apt_refresh="$(date -u +%G-W%V)"
+          # A separate, public cache package (Docker's documented :buildcache
+          # pattern) keeps the deployable image package's tags and lifecycle
+          # independent of the frequently-rewritten build cache.
+          cache_ref="ghcr.io/${GITHUB_REPOSITORY,,}-buildcache:buildcache"
+          # --provenance/--sbom are disabled so the loaded image remains a
+          # single-manifest archive that scripts/audit_image.py accepts.
+          # --load (not a build-time publish) keeps publication behind the
+          # security gate.
+          # Publishing adds --no-cache so the shipped image re-resolves Ubuntu
+          # security updates instead of reusing a possibly-stale cached layer.
+          args=(--load --pull --platform linux/amd64 --progress=plain
+                --provenance=false --sbom=false
+                --cache-from "type=registry,ref=$cache_ref"
+                --cache-to "type=registry,ref=$cache_ref,mode=max"
+                --build-arg "APT_REFRESH=$apt_refresh"
+                --tag colmap-runtime:candidate)
+          if [ "$PUBLISH" = "true" ]; then args+=(--no-cache); fi
+          docker buildx build "${args[@]}" image 2>&1 | tee reports/build.log
+          # Cache-visibility evidence (non-fatal): silent cache degradation must
+          # be observable rather than inferred from wall-clock.
+          printf 'cache_ref=%s\npublish=%s\napt_refresh=%s\n' \
+            "$cache_ref" "$PUBLISH" "$apt_refresh" > reports/cache-mode.txt
+          ( grep -c 'CACHED' reports/build.log || true ) > reports/cache-hits.txt
+          docker buildx inspect --bootstrap > reports/buildx-inspect.txt 2>&1 || true
           docker image inspect colmap-runtime:candidate | python3 scripts/public_metadata.py > reports/image-inspect.json
           docker history --no-trunc colmap-runtime:candidate > reports/image-history.txt
           cid=$(docker create colmap-runtime:candidate)

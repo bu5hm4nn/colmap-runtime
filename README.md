@@ -148,7 +148,24 @@ against that digest. A new GHCR package may need its visibility set to public by
 the repository owner. A pushed but private package is not considered ready.
 
 Candidates remain GPU-unvalidated until an actual GPU test passes. Registry login
-uses only the workflow's short-lived token; it is not passed to Docker builds.
+uses only the workflow's short-lived token; it authenticates the registry build
+cache and the gated publish and is never written into the image.
+
+### Build cache
+
+The candidate build uses BuildKit with a registry cache stored in a separate,
+public package (`ghcr.io/<owner>/colmap-runtime-buildcache:buildcache`,
+`mode=max`), so the pinned COLMAP/BabelStream compile layers are reused instead
+of rebuilt every run. `--provenance`/`--sbom` are disabled so the loaded image
+stays a single-manifest archive for `scripts/audit_image.py`, and the build never
+pushes - publication stays behind the security gate.
+
+The base stage consumes a weekly-changing `APT_REFRESH` build argument, so the
+shipped Ubuntu packages are re-resolved at least weekly; the build-only
+`pycolmap-builder`/`babelstream` stages (which do not ship) stay cached.
+Publication adds `--no-cache`, so a published image is always built from current
+packages. Each run records the cache-hit count and the BuildKit builder identity
+in the evidence artifact, so silent cache degradation is visible.
 Package-write permission is job-wide, not isolated to the publication step.
 A failed anonymous-access check leaves the pushed candidate in the registry;
 it does not roll back the push or establish public deployability.

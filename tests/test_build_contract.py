@@ -23,6 +23,9 @@ class BuildContractTests(unittest.TestCase):
         self.assertIn(lock['python']['url'], dockerfile)
         self.assertIn(lock['python']['sha256'], dockerfile)
         self.assertNotIn('CUDA_CACHE_DISABLE=1', dockerfile)
+        # The base stage bounds apt-layer reuse with a weekly build argument.
+        self.assertIn('ARG APT_REFRESH', dockerfile)
+        self.assertIn('APT_REFRESH=${APT_REFRESH}', dockerfile)
         self.assertFalse(lock['rebuild_bit_identical'])
 
     def test_image_does_not_break_vast_ssh_bootstrap(self):
@@ -240,8 +243,19 @@ class BuildContractTests(unittest.TestCase):
         self.assertIn('workflow_dispatch:', workflow)
         self.assertIn('default: false', workflow)
         self.assertIn('if: inputs.publish', workflow)
-        self.assertIn('docker build --pull', workflow)
+        # BuildKit path: pinned setup action, registry cache, single-manifest
+        # load, and a build that never pushes (publication stays gated).
+        self.assertIn('docker/setup-buildx-action@', workflow)
+        self.assertIn('docker buildx build', workflow)
+        self.assertIn('--pull', workflow)
+        self.assertIn('--provenance=false --sbom=false', workflow)
+        self.assertIn('type=registry,ref=', workflow)
+        self.assertIn('mode=max', workflow)
+        self.assertIn('-buildcache:buildcache', workflow)
+        self.assertIn('APT_REFRESH', workflow)
+        self.assertIn('--no-cache', workflow)
         self.assertIn(' image', workflow)
+        self.assertNotIn('--push', workflow)
         self.assertNotIn('pull_request_target', workflow)
 
 

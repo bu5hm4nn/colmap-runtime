@@ -5,3 +5,10 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+  # Track the digest-pinned nvidia/cuda base; the weekly APT_REFRESH bound only
+  # covers packages installed at build time, not the base image's own contents.
+  - package-ecosystem: docker
+    directory: /image
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
