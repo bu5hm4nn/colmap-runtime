@@ -3,3 +3,6 @@
 !build-variant.sh
 !verify-targets.sh
 !entrypoint.sh
+!build-asan.sh
+!patches
+!patches/parent-static8.patch
