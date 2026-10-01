@@ -52,29 +52,50 @@ jobs:
             --cache-to "type=registry,ref=$cache_ref,mode=max" \
             --tag colmap-dev:pr3 dev 2>&1 | tee reports/build.log
           ( grep -c 'CACHED' reports/build.log || true ) > reports/cache-hits.txt
-      - name: Run available CPU tests
+      - name: List and run available CPU tests (no device tests on the CPU runner)
         shell: bash
         run: |
           set -euo pipefail
+          # List every configured test, then run ONLY the host-side sweep-tile
+          # test; device-required MVS tests are deliberately not executed here.
+          docker run --rm --entrypoint bash colmap-dev:pr3 -lc \
+            'cd /src/colmap-pr3/build && ctest -N' 2>&1 | tee reports/ctest-list.log
           docker run --rm --entrypoint bash colmap-dev:pr3 -lc \
             'cd /src/colmap-pr3/build && ctest --output-on-failure -R sweep_tile' \
             2>&1 | tee reports/cpu-tests.log \
-            || { echo "ctest exited non-zero (recorded; may require a GPU)" | tee -a reports/cpu-tests.log; }
-      - name: Verify emitted CUDA targets (static, no GPU)
+            || { echo "ctest non-zero (recorded; may require a GPU)" | tee -a reports/cpu-tests.log; }
+      - name: Verify emitted CUDA targets (static gate, no GPU)
         shell: bash
         run: |
           set -euo pipefail
           docker run --rm --entrypoint /opt/colmap-dev/verify-targets.sh \
             colmap-dev:pr3 /src/colmap-pr3/build 2>&1 | tee reports/targets.log
-      - name: Capture build/architecture manifest and tool versions
+      - name: Capture CUDA compatibility evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm --entrypoint cat colmap-dev:pr3 /usr/local/cuda/version.json \
+            > reports/cuda-version.json 2>&1 || true
+          docker run --rm --entrypoint nvcc colmap-dev:pr3 --version > reports/nvcc.txt 2>&1 || true
+          cat > reports/cuda-compat.txt <<'EOF'
+CUDA toolkit: 12.8.1 (base nvidia/cuda:12.8.1-devel-ubuntu22.04@sha256:a99a1860ba8e2916e5c3e73b72ec4c4301653a84586e05bfc9a2aa2d58027e97)
+CUDA 12.8 Linux minimum driver: 570.26
+Minor-version-compatibility floor: 525.60.13 (PTX JIT caveats apply)
+Spheron target driver: 570.195.03 (>= 570.26 => natively compatible with CUDA 12.8)
+LIMITATION: no GPU in CI; this is static (toolkit/target) compatibility only.
+Runtime kernel/GPU validation on 3090/5090 is NOT performed here.
+EOF
+          cat reports/cuda-compat.txt
+      - name: Capture build/architecture and committed-repo evidence
         shell: bash
         run: |
           set -euo pipefail
           docker run --rm --entrypoint cat colmap-dev:pr3 /opt/colmap-dev/BUILD-MANIFEST.txt \
             | tee reports/BUILD-MANIFEST.txt
-          docker run --rm --entrypoint nvcc colmap-dev:pr3 --version | tail -3 > reports/nvcc.txt || true
           docker image inspect colmap-dev:pr3 --format '{{.Id}}' > reports/image-id.txt
           printf '%s\n' "$GITHUB_SHA" > reports/workflow-commit.txt
+          git ls-files dev .github/workflows/build-dev.yml > reports/dev-files.txt 2>/dev/null || true
+          cat reports/dev-files.txt
       - name: Generate SBOM
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
