@@ -19,6 +19,8 @@ ARG COLMAP_COMMIT=2a5c9c81b2e77f10aad25582679c8d344c3f6694
 ARG COLMAP_TARBALL_SHA256=b9132fdd6ebb1c92969ce60c37acc29000de22e2b8c6017e5605e7b574697a69
 ARG BOOST_VERSION=1.92.0
 ARG BOOST_SHA256=9bed76128d4e46755dbe818487788c6fceb6f72b378f4daa49b7e1e600d9088d
+ARG PARENT_COMMIT=78f41b8c6cb2629775115ee2dc3b50f21a51c4f1
+ARG PARENT_TARBALL_SHA256=9f132c88a3b2b8b6b8680c5eff4a20dc1dbd96fe2da1f47f4356c5d5aedb8575
 ARG POSELIB_COMMIT=1bb8881f08e68f0b3d9b2ecc411fc15e7766ef1b
 ARG POSELIB_SHA256=ee46322581c7901fe24e91434eeec27163f820d481cba5faa43d37651fabc8e8
 ARG FAISS_VERSION=1.14.1
@@ -32,11 +34,12 @@ LABEL org.opencontainers.image.description="DEV build/test env: COLMAP PR#3 (run
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates curl git cmake ninja-build build-essential ccache unzip xz-utils \
-        libeigen3-dev libgoogle-glog-dev libgflags-dev libfreeimage-dev libmetis-dev \
+        libeigen3-dev libceres-dev libgoogle-glog-dev libgflags-dev libfreeimage-dev libmetis-dev \
         libopenimageio-dev openimageio-tools libsqlite3-dev libcurl4-openssl-dev \
         libssl-dev libglew-dev libgtest-dev libgmock-dev \
+        libopenblas-dev liblapack-dev \
     && rm -rf /var/lib/apt/lists/* \
-    && mkdir -p /usr/include/opencv4 /opt/deps /opt/src /opt/colmap-dev
+    && mkdir -p /usr/include/opencv4 /opt/deps /opt/src /opt/colmap-dev /opt/archives /work/src /work/build /work/opt
 
 # Exported runtime libraries of the shared deps + COLMAP install, so the built
 # binaries/tests resolve them offline (no network, no host installs).
@@ -79,6 +82,15 @@ RUN set -eux; \
     rm -f /tmp/colmap.tar.gz; \
     git -C /opt/src/colmap-pr3 init -q; git -C /opt/src/colmap-pr3 add -A; \
     git -C /opt/src/colmap-pr3 -c user.email=dev@local -c user.name=dev commit -qm "colmap PR#3 ${COLMAP_COMMIT}"
+
+# Bake the EXACT parent (78f41b8c) archive so controls build fully offline from a
+# LOCAL verified tarball (sha enforced) with its own writable tree.
+RUN mkdir -p /opt/archives && \
+    curl -fsSL "https://codeload.github.com/uncloud-tech/colmap/tar.gz/${PARENT_COMMIT}" \
+        -o "/opt/archives/colmap-parent-${PARENT_COMMIT}.tar.gz" && \
+    echo "${PARENT_TARBALL_SHA256}  /opt/archives/colmap-parent-${PARENT_COMMIT}.tar.gz" | sha256sum -c - && \
+    mkdir -p /opt/src/colmap-parent && \
+    tar -xzf "/opt/archives/colmap-parent-${PARENT_COMMIT}.tar.gz" -C /opt/src/colmap-parent --strip-components=1
 
 # Record the immutable dependency/toolchain manifest (source/dep hashes, toolchain).
 RUN { echo "image=colmap-dev"; echo "source_repo=https://github.com/uncloud-tech/colmap"; \
@@ -123,9 +135,9 @@ RUN { echo "--- executed build flags ---"; \
     } >> /opt/colmap-dev/BUILD-MANIFEST.txt
 
 # Stable entrypoint + unprivileged operation (harness runs as UID 1002).
-COPY build-variant.sh verify-targets.sh entrypoint.sh /opt/colmap-dev/
+COPY build-variant.sh verify-targets.sh entrypoint.sh build-asan.sh /opt/colmap-dev/
 COPY patches/ /opt/colmap-dev/patches/
 RUN chmod +x /opt/colmap-dev/*.sh \
-    && chmod -R a+rX /opt/colmap-pr3 /opt/colmap-dev /opt/deps /opt/src \
-    && mkdir -p /work && chmod 0777 /work
+    && chmod -R a+rX /opt/colmap-pr3 /opt/colmap-dev /opt/deps /opt/src /opt/archives \
+    && chmod -R 0777 /work
 ENTRYPOINT ["/opt/colmap-dev/entrypoint.sh"]
