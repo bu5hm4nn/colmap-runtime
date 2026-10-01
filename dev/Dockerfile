@@ -11,15 +11,15 @@
 # - ONNX is OFF explicitly (documented omission for benchmark scope).
 # - Arch list is an ARG; the built MVS code coverage is verified statically by
 #   verify-targets.sh (no GPU launch).
-FROM nvidia/cuda:12.8.1-devel-ubuntu22.04@sha256:a99a1860ba8e2916e5c3e73b72ec4c4301653a84586e05bfc9a2aa2d58027e97
+FROM nvidia/cuda:12.8.1-devel-ubuntu24.04@sha256:520292dbb4f755fd360766059e62956e9379485d9e073bbd2f6e3c20c270ed66
 
 ARG COLMAP_COMMIT=2a5c9c81b2e77f10aad25582679c8d344c3f6694
 ARG COLMAP_TARBALL_SHA256=b9132fdd6ebb1c92969ce60c37acc29000de22e2b8c6017e5605e7b574697a69
 ARG PARENT_COMMIT=78f41b8c6cb2629775115ee2dc3b50f21a51c4f1
 ARG PARENT_TARBALL_SHA256=9f132c88a3b2b8b6b8680c5eff4a20dc1dbd96fe2da1f47f4356c5d5aedb8575
 ARG CUDA_ARCHITECTURES="86;120"
-ARG GTEST_VERSION=1.18.0
-ARG GTEST_SHA256=6e3191c1455468b3fc35a417fb565c1c5071aee1b7e7f85e30cf48a98d37d8b5
+ARG GTEST_COMMIT=063de7e9578f82b369302001269680b4b1553359
+ARG GTEST_SHA256=623fe05d283020f37a579a8985ba338091ac7229da62b5591ff40acdf05b95e2
 
 ENV DEBIAN_FRONTEND=noninteractive
 LABEL org.opencontainers.image.description="TEMPORARY dev image: COLMAP PR#3 (runtime sweep tiles); CPU-built, not GPU-validated"
@@ -38,7 +38,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && mkdir -p /usr/include/opencv4
 
 # Pinned GTest 1.18.0, installed under /usr/local (COLMAP find_package(GTest)).
-RUN curl -fsSL "https://github.com/google/googletest/archive/refs/tags/v${GTEST_VERSION}.tar.gz" \
+RUN curl -fsSL "https://github.com/google/googletest/archive/${GTEST_COMMIT}.tar.gz" \
         -o /tmp/gtest.tar.gz && \
     echo "${GTEST_SHA256}  /tmp/gtest.tar.gz" | sha256sum -c - && \
     mkdir -p /opt/gtest-src && tar -xzf /tmp/gtest.tar.gz -C /opt/gtest-src --strip-components=1 && \
@@ -79,7 +79,7 @@ RUN { echo "image=colmap-dev"; echo "source_repo=https://github.com/uncloud-tech
       echo "parent_tarball_sha256=${PARENT_TARBALL_SHA256}"; \
       echo "cuda_architectures=${CUDA_ARCHITECTURES}"; \
       echo "onnx=OFF"; echo "tests=ON"; \
-      echo "gtest_version=${GTEST_VERSION}"; echo "gtest_sha256=${GTEST_SHA256}"; \
+      echo "gtest_commit=${GTEST_COMMIT}"; echo "gtest_sha256=${GTEST_SHA256}"; \
       echo "nvcc=$(nvcc --version | tail -1)"; } > /opt/colmap-dev/BUILD-MANIFEST.txt
 
 COPY build-variant.sh verify-targets.sh /opt/colmap-dev/
