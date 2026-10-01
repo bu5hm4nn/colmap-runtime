@@ -9,8 +9,11 @@ imports by digest passed; GPU execution and reconstruction quality remain unvali
 ghcr.io/bu5hm4nn/colmap-runtime@sha256:3922f73194629e3f1b9d83b639d03bf8b7188cbec9776706d49dfa9438f64fde
 ```
 
-Built from commit `800cd7d4dd56933c647caedee7eea4210ca22158` in
-[workflow run 36315027809](https://github.com/bu5hm4nn/colmap-runtime/actions/runs/36315027809).
+This candidate was published from the pre-transfer `bu5hm4nn` namespace and
+remains anonymously pullable there; new candidates publish to
+`ghcr.io/uncloud-tech/colmap-runtime`. Built from commit
+`800cd7d4dd56933c647caedee7eea4210ca22158` in
+[workflow run 36315027809](https://github.com/uncloud-tech/colmap-runtime/actions/runs/36315027809).
 Later repository changes are not automatically included in this image.
 
 ## Build

@@ -1,5 +1,5 @@
 FROM nvidia/cuda@sha256:1199283a7fd5fc7dcb472ea4c6b6d8eb378ef8c0b9aae5e731491c01a219ca43 AS base
-LABEL org.opencontainers.image.source="https://github.com/bu5hm4nn/colmap-runtime"
+LABEL org.opencontainers.image.source="https://github.com/uncloud-tech/colmap-runtime"
 LABEL org.opencontainers.image.description="Pinned CUDA-enabled PyCOLMAP runtime; GPU validation requires a separate test"
 
 RUN apt-get update && \
