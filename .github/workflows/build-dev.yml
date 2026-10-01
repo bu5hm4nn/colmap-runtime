@@ -58,53 +58,30 @@ jobs:
             --cache-to "type=registry,ref=$cache_ref,mode=max" \
             --tag colmap-dev:pr3 dev 2>&1 | tee reports/build.log
           ( grep -c 'CACHED' reports/build.log || true ) > reports/cache-hits.txt
-      - name: List and run the host-side sweep-tile test (no device tests)
+      - name: Collect installed dependencies and run selected CPU test offline
         shell: bash
         run: |
           set -euo pipefail
-          # List matching tests, then assert the expected one is configured, then
-          # run it with --no-tests=error so a zero-match run cannot "pass".
-          # This runs ONLY the host-side sweep-tile test, not the full suite;
-          # device-required MVS tests are not executed on the CPU runner.
-          docker run --rm --entrypoint bash colmap-dev:pr3 -lc \
-            'cd /src/colmap-pr3/build && ctest -N -R sweep_tile' 2>&1 | tee reports/ctest-list.log
-          grep -q 'sweep_tile' reports/ctest-list.log \
-            || { echo "FAIL: expected sweep_tile test is not configured" | tee reports/cpu-tests.log; exit 1; }
-          docker run --rm --entrypoint bash colmap-dev:pr3 -lc \
-            'cd /src/colmap-pr3/build && ctest --no-tests=error --output-on-failure -R sweep_tile' \
-            2>&1 | tee reports/cpu-tests.log
-      - name: Verify emitted CUDA targets (static gate, no GPU)
+          # Verification is external to the cached dependency/kernel image recipe.
+          docker run --rm --network none --entrypoint bash \
+            --mount "type=bind,source=$PWD/scripts/collect_dev_evidence.sh,target=/verification.sh,readonly" \
+            --mount "type=bind,source=$PWD/reports,target=/evidence" \
+            colmap-dev:pr3 /verification.sh 2>&1 | tee reports/verification.log
+      - name: Require per-MVS-kernel sm86 SASS and compute90 PTX
         shell: bash
         run: |
           set -euo pipefail
-          docker run --rm --entrypoint /opt/colmap-dev/verify-targets.sh \
-            colmap-dev:pr3 /src/colmap-pr3/build 2>&1 | tee reports/targets.log
-      - name: Capture CUDA compatibility evidence
-        shell: bash
-        run: |
-          set -euo pipefail
-          docker run --rm --entrypoint cat colmap-dev:pr3 /usr/local/cuda/version.json \
-            > reports/cuda-version.json 2>&1 || true
-          docker run --rm --entrypoint nvcc colmap-dev:pr3 --version > reports/nvcc.txt 2>&1 || true
-          {
-            printf '%s\n' \
-              'CUDA toolkit: 12.8.1 (base nvidia/cuda:12.8.1-devel-ubuntu22.04@sha256:a99a1860ba8e2916e5c3e73b72ec4c4301653a84586e05bfc9a2aa2d58027e97)' \
-              'CUDA 12.8 Linux minimum driver: 570.26' \
-              'Minor-version-compatibility floor: 525.60.13 (PTX JIT caveats apply)' \
-              'Spheron target driver: 570.195.03 (>= 570.26 => natively compatible with CUDA 12.8)' \
-              'LIMITATION: no GPU in CI; static (toolkit/target) compatibility only.' \
-              'Runtime kernel/GPU validation on 3090/5090 is NOT performed here.'
-          } > reports/cuda-compat.txt
-          cat reports/cuda-compat.txt
+          python3 scripts/check_dev_targets.py reports 2>&1 | tee reports/targets.log
       - name: Capture build/architecture and committed-repo evidence
         shell: bash
         run: |
           set -euo pipefail
-          docker run --rm --entrypoint cat colmap-dev:pr3 /opt/colmap-dev/BUILD-MANIFEST.txt \
-            | tee reports/BUILD-MANIFEST.txt
+          cat reports/BUILD-MANIFEST.txt
           docker image inspect colmap-dev:pr3 --format '{{.Id}}' > reports/image-id.txt
           printf '%s\n' "$GITHUB_SHA" > reports/workflow-commit.txt
-          git ls-files dev .github/workflows/build-dev.yml > reports/dev-files.txt 2>/dev/null || true
+          git ls-files dev .github/workflows/build-dev.yml scripts/collect_dev_evidence.sh scripts/check_dev_targets.py > reports/dev-files.txt
+          git log -1 --format=%H -- dev > reports/image-recipe-last-change.txt
+          sha256sum dev/Dockerfile dev/*.sh scripts/collect_dev_evidence.sh scripts/check_dev_targets.py > reports/recipe-verifier-sha256.txt
           cat reports/dev-files.txt
       - name: Generate SBOM
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
@@ -116,14 +93,13 @@ jobs:
           output: reports/sbom.cdx.json
           timeout: 10m
           cache: false
-      - name: Record vulnerability findings (informational for dev)
+      - name: Require zero HIGH or CRITICAL vulnerabilities
         shell: bash
         run: |
           set -euo pipefail
           trivy image --scanners vuln --format json --timeout 10m \
-            --output reports/vulnerabilities.json colmap-dev:pr3 || true
-          python3 scripts/check_security.py reports/vulnerabilities.json > reports/security-gate.json \
-            || echo "dev image has HIGH/CRITICAL findings (recorded, not gated)" > reports/security-gate.txt
+            --output reports/vulnerabilities.json colmap-dev:pr3
+          python3 scripts/check_security.py reports/vulnerabilities.json > reports/security-gate.json 2> reports/security-gate-errors.txt
           (cd reports && sha256sum *.json *.txt *.log > SHA256SUMS)
       - name: Publish experimental dev image
         if: inputs.publish
@@ -133,17 +109,27 @@ jobs:
         run: |
           set -euo pipefail
           repository="ghcr.io/${GITHUB_REPOSITORY,,}-dev"
-          tag="$repository:pr3-2a5c9c81"
+          tag="$repository:pr3-${GITHUB_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           config=$(mktemp -d)
           trap 'rm -rf "$config"' EXIT
           export DOCKER_CONFIG="$config"
           printf '%s' "$REGISTRY_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
           unset REGISTRY_TOKEN
+          test "$(docker image inspect --format '{{.Id}}' colmap-dev:pr3)" = "$(cat reports/image-id.txt)"
           docker tag colmap-dev:pr3 "$tag"
           docker push "$tag"
           reference=$(docker image inspect --format '{{index .RepoDigests 0}}' "$tag")
+          case "$reference" in "$repository"@sha256:*) ;; *) echo 'Unexpected published reference' >&2; exit 1;; esac
           printf '%s\n' "$reference" | tee reports/published-image.txt
           (cd reports && sha256sum *.json *.txt *.log > SHA256SUMS)
+      - name: Hash evidence even after failure
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -d reports ]; then
+            (cd reports && find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 -r sha256sum > SHA256SUMS)
+          fi
       - name: Retain evidence even after failure
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
