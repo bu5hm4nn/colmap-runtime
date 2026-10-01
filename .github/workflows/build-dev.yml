@@ -1,0 +1,123 @@
+name: Build dev image (PR#3 runtime sweep tiles)
+
+# TEMPORARY dev build, kept entirely separate from the production pipeline:
+# its own concurrency group, cache ref and image package. CPU-validated only —
+# nvcc/cmake run without a GPU, so this proves the tree compiles and which CUDA
+# targets are emitted, NOT that the kernels run on hardware.
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish the experimental dev image to ghcr.io
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: colmap-dev-build
+  cancel-in-progress: false
+
+jobs:
+  build:
+    permissions:
+      contents: read
+      packages: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up BuildKit builder
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Log in to GHCR for build-cache access
+        shell: bash
+        env:
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$REGISTRY_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          unset REGISTRY_TOKEN
+      - name: Build dev image (exact PR#3 tree)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          cache_ref="ghcr.io/${GITHUB_REPOSITORY,,}-dev-buildcache:buildcache"
+          docker buildx build --load --pull --platform linux/amd64 --progress=plain \
+            --provenance=false --sbom=false \
+            --cache-from "type=registry,ref=$cache_ref" \
+            --cache-to "type=registry,ref=$cache_ref,mode=max" \
+            --tag colmap-dev:pr3 dev 2>&1 | tee reports/build.log
+          ( grep -c 'CACHED' reports/build.log || true ) > reports/cache-hits.txt
+      - name: Run available CPU tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm --entrypoint bash colmap-dev:pr3 -lc \
+            'cd /src/colmap-pr3/build && ctest --output-on-failure -R sweep_tile' \
+            2>&1 | tee reports/cpu-tests.log \
+            || { echo "ctest exited non-zero (recorded; may require a GPU)" | tee -a reports/cpu-tests.log; }
+      - name: Verify emitted CUDA targets (static, no GPU)
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm --entrypoint /opt/colmap-dev/verify-targets.sh \
+            colmap-dev:pr3 /src/colmap-pr3/build 2>&1 | tee reports/targets.log
+      - name: Capture build/architecture manifest and tool versions
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm --entrypoint cat colmap-dev:pr3 /opt/colmap-dev/BUILD-MANIFEST.txt \
+            | tee reports/BUILD-MANIFEST.txt
+          docker run --rm --entrypoint nvcc colmap-dev:pr3 --version | tail -3 > reports/nvcc.txt || true
+          docker image inspect colmap-dev:pr3 --format '{{.Id}}' > reports/image-id.txt
+          printf '%s\n' "$GITHUB_SHA" > reports/workflow-commit.txt
+      - name: Generate SBOM
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          version: v0.74.0
+          scan-type: image
+          image-ref: colmap-dev:pr3
+          format: cyclonedx
+          output: reports/sbom.cdx.json
+          timeout: 10m
+          cache: false
+      - name: Record vulnerability findings (informational for dev)
+        shell: bash
+        run: |
+          set -euo pipefail
+          trivy image --scanners vuln --format json --timeout 10m \
+            --output reports/vulnerabilities.json colmap-dev:pr3 || true
+          python3 scripts/check_security.py reports/vulnerabilities.json > reports/security-gate.json \
+            || echo "dev image has HIGH/CRITICAL findings (recorded, not gated)" > reports/security-gate.txt
+          (cd reports && sha256sum *.json *.txt *.log > SHA256SUMS)
+      - name: Publish experimental dev image
+        if: inputs.publish
+        shell: bash
+        env:
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          repository="ghcr.io/${GITHUB_REPOSITORY,,}-dev"
+          tag="$repository:pr3-2a5c9c81"
+          config=$(mktemp -d)
+          trap 'rm -rf "$config"' EXIT
+          export DOCKER_CONFIG="$config"
+          printf '%s' "$REGISTRY_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          unset REGISTRY_TOKEN
+          docker tag colmap-dev:pr3 "$tag"
+          docker push "$tag"
+          reference=$(docker image inspect --format '{{index .RepoDigests 0}}' "$tag")
+          printf '%s\n' "$reference" | tee reports/published-image.txt
+          (cd reports && sha256sum *.json *.txt *.log > SHA256SUMS)
+      - name: Retain evidence even after failure
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: runtime-evidence-dev-${{ github.run_id }}
+          path: reports/
+          if-no-files-found: warn
+          retention-days: 14
